@@ -122,7 +122,7 @@ def valuation_rows(r: Report, dot: str) -> list[Row]:
         rows.append(Row("Owner FCF yield", pct(v.fcf_yield), "cash for owners ÷ market value"))
     if finite(v.maintenance_capex_share) and v.maintenance_capex_share < 0.999:
         rows.append(Row("Maintenance capex", f"{v.maintenance_capex_share:.0%} of capex",
-                        "rest treated as growth investment (Greenwald)"))  # fmt: skip
+                        "upkeep (at most depreciation); the rest counts as growth investment"))  # fmt: skip
     if finite(v.earnings_yield):
         rows.append(
             Row("Earnings yield (EBIT/EV)", pct(v.earnings_yield), "operating profit ÷ company value")

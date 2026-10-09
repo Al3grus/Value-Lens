@@ -124,11 +124,14 @@ def apply_owner_earnings(
     lookback: int = 5,
     maintenance: bool = True,
     subtract_sbc: bool = True,
+    max_da_multiple: float | None = 1.0,
 ) -> float | None:
     """Buffett's owner earnings (1986 letter) deduct only the capex needed to *maintain* the
     business, not capex spent on growth. Maintenance capex is estimated with Bruce Greenwald's
     method: growth capex = (average PP&E / sales over prior years) x increase in sales;
-    maintenance = total capex - growth capex, floored at depreciation and capped at total capex.
+    maintenance = total capex - growth capex, floored at depreciation, capped at
+    ``max_da_multiple`` x depreciation (None = no cap) and at total capex. The depreciation cap
+    matters during build-outs: capex far ahead of sales would otherwise count as upkeep.
 
     Updates ``maint_capex`` and ``owner_fcf`` in place and returns the latest maintenance share
     of total capex (None if unknown)."""
@@ -138,7 +141,11 @@ def apply_owner_earnings(
     growth_capex = (avg_ratio * annual["revenue"].diff().clip(lower=0)).fillna(0)
     maint = (capex - growth_capex).clip(lower=0)
     floor = np.minimum(annual["dep_amort"], capex)
-    maint = maint.where(floor.isna() | (maint >= floor), floor).clip(upper=capex)
+    maint = maint.where(floor.isna() | (maint >= floor), floor)
+    if max_da_multiple is not None:
+        cap = annual["dep_amort"] * max_da_multiple
+        maint = maint.where(cap.isna() | (maint <= cap), cap)
+    maint = maint.clip(upper=capex)
     if not maintenance:
         maint = capex.copy()
     annual["maint_capex"] = maint

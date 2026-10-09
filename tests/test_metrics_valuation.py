@@ -5,6 +5,7 @@ import pytest
 
 from valuelens.analysis.metrics import cagr, clamp, fmt_money, point_cagr, smoothed_cagr
 from valuelens.analysis.valuation import (
+    base_cash_flow,
     compute_valuation,
     dcf_enterprise,
     dcf_per_share,
@@ -13,6 +14,21 @@ from valuelens.analysis.valuation import (
     graham_number,
     reverse_dcf,
 )
+
+
+def test_dcf_starts_from_latest_twelve_months():
+    annual = pd.Series([11.6, 4.8, 5.2])  # KO: two years cut by one-off cash payments
+    assert base_cash_flow(annual, 12.5, has_newer_quarter=True) == 12.5
+    assert base_cash_flow(annual, 12.5, has_newer_quarter=False) == 5.2  # latest year = TTM
+    assert base_cash_flow(annual, 12.5, True, periods=3) == pytest.approx((4.8 + 5.2 + 12.5) / 3)
+    assert base_cash_flow(annual, 12.5, False, periods=3) == pytest.approx((11.6 + 4.8 + 5.2) / 3)
+
+
+def test_dcf_base_periods_setting_is_used(bundle, cfg):
+    one = compute_valuation(bundle, cfg).methods[0].value
+    cfg["valuation"]["dcf_base_periods"] = 3
+    three = compute_valuation(bundle, cfg).methods[0].value
+    assert one and three and one != three
 
 
 def test_cagr():

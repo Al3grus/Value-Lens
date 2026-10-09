@@ -78,6 +78,10 @@ fade_years = 5
 subtract_sbc = true           # owner earnings: treat stock-based compensation as a real cost
 maintenance_capex = true      # owner earnings deduct maintenance capex only (Greenwald estimate)
 maintenance_capex_lookback = 5  # years of PP&E/sales history used to split growth vs maintenance capex
+maintenance_capex_max_da = 1.0  # maintenance capex is at most this multiple of depreciation: Greenwald's
+                                # estimate counts most of an investment boom (e.g. AI data centres) as upkeep
+dcf_base_periods = 1          # DCF starts from the average of the latest N twelve-month periods (1 = latest
+                              # twelve months; averaging carries one-off cash payments and lags growth)
 core_earnings_threshold = 0.15  # use core (operating) earnings when non-operating items exceed 15%
 scenario_growth_delta = 0.03  # bear/bull cases: growth -/+ 3pp
 scenario_rate_delta = 0.01    # bear/bull cases: discount rate +/- 1pp

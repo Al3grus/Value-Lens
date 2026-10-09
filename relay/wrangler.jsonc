@@ -1,4 +1,4 @@
-// Cloudflare Worker that relays the website's data requests (see README "Website").
+// Cloudflare Worker that relays the website's data requests (see CLAUDE.md, "Publishing").
 // Deploy:  npx wrangler login   then   npx wrangler deploy
 {
   "$schema": "./node_modules/wrangler/config-schema.json",

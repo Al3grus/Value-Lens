@@ -71,6 +71,22 @@ test("SEC: identity required and sent as User-Agent; HEAD has no body", async ()
   assert.equal(res.headers.get("Access-Control-Allow-Origin"), ORIGIN);
 });
 
+test("SEC identity check: a refused (403) request is retried up to twice; other routes are not", async () => {
+  const opts = { method: "HEAD", headers: { "X-SEC-Identity": IDENT } };
+  let n = 0;
+  const flaky = upstream(() => new Response(null, { status: ++n <= 2 ? 403 : 200 }));
+  const ok = await handle(req("sec/www/files/company_tickers.json", opts), ENV, {}, { fetch: flaky.fetch, cache: null });
+  assert.equal(ok.status, 200);
+  assert.equal(flaky.calls.length, 3);
+  const refused = upstream(() => new Response(null, { status: 403 }));
+  const no = await handle(req("sec/www/files/company_tickers.json", opts), ENV, {}, { fetch: refused.fetch, cache: null });
+  assert.equal(no.status, 403);
+  assert.equal(refused.calls.length, 3);
+  const data = upstream(() => new Response("{}", { status: 403 }));
+  await handle(req("sec/data/submissions/CIK0000320193.json", { headers: { "X-SEC-Identity": IDENT } }), ENV, {}, { fetch: data.fetch, cache: null });
+  assert.equal(data.calls.length, 1);
+});
+
 test("SEC filings are cached at the edge without the identity", async () => {
   const cache = new MemCache();
   const { fetch, calls } = upstream(() => new Response('{"facts":{}}', { headers: { "Content-Type": "application/json" } }));

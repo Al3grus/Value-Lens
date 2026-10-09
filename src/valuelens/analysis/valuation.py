@@ -132,12 +132,14 @@ def unlevered(frame: pd.DataFrame | pd.Series, col: str, tax_rate: float):
     return frame[col] + interest * (1 - tax_rate)
 
 
-def base_cash_flow(annual: pd.Series, ttm_value: float | None, has_newer_quarter: bool) -> float | None:
-    """Normalised starting cash flow: average of the last three annual figures, using the
-    trailing twelve months in place of the oldest year when a newer quarter exists."""
-    vals = list(tail(annual, 3).values)
+def base_cash_flow(
+    annual: pd.Series, ttm_value: float | None, has_newer_quarter: bool, periods: int = 1
+) -> float | None:
+    """Starting cash flow: average of the latest ``periods`` twelve-month figures, the trailing
+    twelve months first when a newer quarter exists, then the annual figures."""
+    vals = list(tail(annual, periods).values)
     if has_newer_quarter and finite(ttm_value):
-        vals = [*vals[-2:], float(ttm_value)]
+        vals = [*vals, float(ttm_value)][-periods:]
     vals = [v for v in vals if finite(v)]
     return float(np.mean(vals)) if vals else None
 
@@ -167,7 +169,12 @@ def compute_valuation(b: DataBundle, cfg: dict[str, Any]) -> Valuation:
     g_parts = [g for g in (growth["revenue_5y"], growth["fcf_5y"]) if finite(g)]
     g1 = clamp(float(np.mean(g_parts)), vcfg["growth_floor"], vcfg["growth_cap"]) if g_parts else None
     newer_q = b.ttm_end > b.annual.index[-1]
-    base = base_cash_flow(unlevered(b.annual, cash_col, tax), unlevered(ttm, cash_col, tax), newer_q)
+    base = base_cash_flow(
+        unlevered(b.annual, cash_col, tax),
+        unlevered(ttm, cash_col, tax),
+        newer_q,
+        int(vcfg["dcf_base_periods"]),
+    )
     if b.is_financial:
         notes.append("Financial company: cash-flow DCF not meaningful.")
     elif not shares:

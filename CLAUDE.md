@@ -14,6 +14,15 @@ site locally with a Python relay).
   `VALUELENS_SEC_USER_AGENT="Name email"`)
 - Test: `uv run pytest` (fully offline). Lint/format: `uv run ruff check . && uv run ruff format --check .`
 
+## Publishing (the README is for visitors only: what it is + link to the site)
+- Site: https://al3grus.github.io/Value-Lens/. Pages source is GitHub Actions
+  (`.github/workflows/pages.yml`, runs on push to main); it needs the repository variable
+  `RELAY_URL` = the relay Worker's https address (`gh variable set RELAY_URL --body <url>`).
+- Relay: `cd relay; npx wrangler deploy`. `ALLOWED_ORIGINS` in `relay/wrangler.jsonc` is the
+  site origin (`https://al3grus.github.io`, no path). Free plan: 100,000 requests/day; each
+  visitor is limited to 120/min by the `RATE_LIMITER` binding.
+- Deploy order when routes change: push the site first, then deploy the relay.
+
 ## Architecture
 - `data/` — network + normalisation only. `sec.py` parses XBRL companyfacts (annual = 340–390-day
   periods from 10-K/20-F, latest filing wins; TTM = FY + YTD − prior YTD with per-part filing dates

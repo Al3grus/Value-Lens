@@ -604,6 +604,25 @@ def test_relay_only_forwards_allowlisted_paths_and_params(relay):
     assert str(up.seen[-1].url) == "https://fred.stlouisfed.org/graph/fredgraph.csv?id=AAA"
 
 
+def test_relay_retries_refused_sec_identity_check():
+    import httpx2
+
+    from valuelens.web.relay import Relay
+
+    calls = []
+
+    def handler(request):
+        calls.append(request.url.path)
+        refused = calls.count(request.url.path) <= 2 or "CIK" in request.url.path
+        return httpx2.Response(403 if refused else 200)
+
+    r = Relay(httpx2.Client(transport=httpx2.MockTransport(handler)))
+    head = r.handle("HEAD", "sec/www/files/company_tickers.json", [], {"X-SEC-Identity": IDENT})
+    assert head.status == 200 and calls.count("/files/company_tickers.json") == 3  # two retries
+    data = r.handle("GET", "sec/data/submissions/CIK0000320193.json", [], {"X-SEC-Identity": IDENT})
+    assert data.status == 403 and calls.count("/submissions/CIK0000320193.json") == 1  # not retried
+
+
 def test_relay_yahoo_summary_gets_crumb(relay):
     r, up = relay
     res = r.handle("GET", "yahoo/q2/v10/finance/quoteSummary/MSFT", [("modules", "price")], {})

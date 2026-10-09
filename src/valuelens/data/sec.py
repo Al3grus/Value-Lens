@@ -95,8 +95,8 @@ class SecClient:
             raise SecError(f"SEC request failed: {url}: {exc}") from exc
         if resp.status == 403:
             raise SecIdentityError(
-                "SEC refused the request (403): it only serves requests that declare a real name and "
-                "e-mail. Check your identity."
+                "The SEC refused the request (403). This is usually temporary: wait a minute and try "
+                "again. If it keeps happening, check that the name and e-mail are your own."
             )
         if resp.status == 429:
             raise SecError("SEC rate limit reached (more than 10 requests per second). Wait a minute.")

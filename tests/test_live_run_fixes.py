@@ -84,13 +84,26 @@ def _capex_frame(capex_last: float) -> pd.DataFrame:
 def test_greenwald_maintenance_capex():
     a = _capex_frame(115.95)
     ttm = a.iloc[-1].copy()
-    share = apply_owner_earnings(a, ttm)
+    share = apply_owner_earnings(a, ttm, max_da_multiple=None)  # Greenwald's estimate, uncapped
     ratio = (a["ppe_net"] / a["revenue"]).iloc[:-1].mean()
     expected = 115.95 - ratio * (331.8 - 281.7)
     assert a["maint_capex"].iloc[-1] == pytest.approx(expected)
     assert a["owner_fcf"].iloc[-1] == pytest.approx(182.9 - expected - 12.4)
     assert share == pytest.approx(expected / 115.95)
     assert ttm["owner_fcf"] == pytest.approx(182.9 - 115.95 * share - 12.4)
+
+
+def test_maintenance_capex_capped_at_depreciation():
+    # MSFT FY2026: $116B capex during the AI build-out. Greenwald's estimate calls ~$90B of it
+    # maintenance; capped at depreciation ($34.3B) the rest counts as growth investment.
+    a = _capex_frame(115.95)
+    ttm = a.iloc[-1].copy()
+    share = apply_owner_earnings(a, ttm)
+    assert a["maint_capex"].iloc[-1] == pytest.approx(34.3)
+    assert a["owner_fcf"].iloc[-1] == pytest.approx(182.9 - 34.3 - 12.4)
+    assert share == pytest.approx(34.3 / 115.95)
+    apply_owner_earnings(a, ttm, max_da_multiple=1.5)
+    assert a["maint_capex"].iloc[-1] == pytest.approx(34.3 * 1.5)
 
 
 def test_maintenance_capex_floored_at_depreciation():
@@ -125,4 +138,4 @@ def test_classify_trend(price, sma50, sma200, mom, expected):
 def test_header_wording(cfg):
     text = render(analyze_bundle(build_bundle(), cfg), "detailed", width=140)
     assert "TTM to 2026-06-30" in text
-    assert "Maintenance capex" in text and "Greenwald" in text
+    assert "Maintenance capex" in text and "growth investment" in text

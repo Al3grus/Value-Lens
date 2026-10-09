@@ -322,6 +322,7 @@ def load_bundle(
         int(vcfg["maintenance_capex_lookback"]),
         maintenance=bool(vcfg["maintenance_capex"]),
         subtract_sbc=bool(vcfg["subtract_sbc"]),
+        max_da_multiple=float(vcfg["maintenance_capex_max_da"]),
     )
 
     fx = 1.0

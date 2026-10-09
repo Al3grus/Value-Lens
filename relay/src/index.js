@@ -134,6 +134,10 @@ export async function handle(request, env = {}, ctx = {}, deps = {}) {
       upstream = await yahooFetch(fetchFn, base, params, headers);
     } else {
       upstream = await fetchFn(target(), { method: request.method, headers, redirect: "follow" });
+      for (let i = 0; i < (route.retry_denied || 0) && upstream.status === 403; i++) {
+        await upstream.body?.cancel();
+        upstream = await fetchFn(target(), { method: request.method, headers, redirect: "follow" });
+      }
     }
   } catch (err) {
     return json(502, { error: `Upstream unreachable (${err && err.name ? err.name : "error"}).` }, cors);

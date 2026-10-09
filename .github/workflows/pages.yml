@@ -1,5 +1,5 @@
 # Builds the website and publishes it to GitHub Pages.
-# One-time setup (README, "Website"): Settings -> Pages -> Source: GitHub Actions, and
+# One-time setup (CLAUDE.md, "Publishing"): Settings -> Pages -> Source: GitHub Actions, and
 # Settings -> Secrets and variables -> Actions -> Variables: RELAY_URL = your Worker's address.
 name: Website
 
