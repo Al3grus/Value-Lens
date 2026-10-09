@@ -1,0 +1,149 @@
+# ValueLens default configuration.
+# Copy any section into ./valuelens.toml (or pass --config path) to override it.
+# Only the keys you set are overridden; everything else falls back to these defaults.
+
+[sec]
+# SEC requires a User-Agent that identifies you: "Your Name your@email.com".
+# Can also be set with the VALUELENS_SEC_USER_AGENT environment variable.
+user_agent = ""
+
+[fred]
+# Optional free key from https://fredaccount.stlouisfed.org/apikeys (32 lowercase letters/digits).
+# With a key, rates come from FRED's official API; without one, from FRED's public CSV download.
+# Can also be set with the VALUELENS_FRED_API_KEY environment variable.
+api_key = ""
+
+[report]
+view = "simple"               # "simple" (plain English) or "detailed" (every number); CLI flags override
+animations = true             # live loading checklist in interactive terminals
+
+[cache]
+enabled = true
+dir = ""                      # empty = ~/.cache/valuelens (or %LOCALAPPDATA%\valuelens\cache on Windows)
+fundamentals_ttl_hours = 24
+macro_ttl_hours = 24
+ticker_map_ttl_hours = 168
+
+[macro]
+# Used only if FRED cannot be reached.
+aaa_yield_fallback = 6.0      # Moody's Seasoned Aaa Corporate Bond Yield, percent (Sep 2026: 6.03)
+treasury_10y_fallback = 5.3   # 10-year Treasury constant maturity, percent (Oct 2026: 5.28)
+
+# ---------------------------------------------------------------------------
+# Benjamin Graham — Defensive investor criteria (The Intelligent Investor, ch. 14)
+# ---------------------------------------------------------------------------
+[graham]
+min_revenue_usd = 2.0e9       # "adequate size" ($100M sales in 1971, inflation-adjusted)
+min_current_ratio = 2.0
+earnings_years = 10           # positive earnings in each of the past N years
+dividend_years = 20           # uninterrupted dividends for the past N years
+min_eps_growth = 0.33         # +33% in per-share earnings over 10y, using 3-year averages
+max_pe_3y = 15.0              # price / average EPS of the last 3 years
+max_pb = 1.5
+max_pe_x_pb = 22.5
+min_history_years = 5         # fewer years of data than this -> criterion is N/A
+formula_growth_cap = 0.15     # cap on g in Graham's formula V = EPS x (8.5 + 2g) x 4.4 / Y
+
+# ---------------------------------------------------------------------------
+# Warren Buffett — Business quality + price discipline
+# ---------------------------------------------------------------------------
+[buffett]
+fcf_positive_ratio = 0.8      # positive FCF in >= 80% of the last 10 years
+min_roe = 0.15
+min_roic = 0.12
+min_interest_coverage = 5.0
+max_net_debt_ebitda = 3.0
+min_gross_margin = 0.40       # Buffett/Clark: durable advantage usually shows >= 40%
+min_op_margin = 0.15
+min_revenue_cagr = 0.05
+min_fcf_cagr = 0.05
+max_dilution_5y = 0.02        # diluted share count may grow at most 2% over 5 years
+max_capex_to_net_income = 0.50
+max_ev_fcf = 25.0
+max_pe = 25.0
+
+# ---------------------------------------------------------------------------
+# Intrinsic value
+# ---------------------------------------------------------------------------
+[valuation]
+equity_risk_premium = 0.05
+min_discount_rate = 0.08      # floor for both cost of equity and WACC
+beta_floor = 0.8
+beta_cap = 1.6
+terminal_growth = 0.025
+growth_cap = 0.15
+growth_floor = -0.05
+high_growth_years = 5
+fade_years = 5
+subtract_sbc = true           # owner earnings: treat stock-based compensation as a real cost
+maintenance_capex = true      # owner earnings deduct maintenance capex only (Greenwald estimate)
+maintenance_capex_lookback = 5  # years of PP&E/sales history used to split growth vs maintenance capex
+core_earnings_threshold = 0.15  # use core (operating) earnings when non-operating items exceed 15%
+scenario_growth_delta = 0.03  # bear/bull cases: growth -/+ 3pp
+scenario_rate_delta = 0.01    # bear/bull cases: discount rate +/- 1pp
+default_tax_rate = 0.21
+
+[valuation.weights]           # blended fair value (weights are renormalised over available methods)
+dcf = 0.6
+graham_formula = 0.2
+epv = 0.2
+graham_number = 0.0
+
+[valuation.weights_financial] # banks / insurers: cash-flow based methods are not meaningful
+dcf = 0.0
+graham_formula = 0.5
+epv = 0.0
+graham_number = 0.5
+
+# ---------------------------------------------------------------------------
+# Evidence-based factors (absolute rules of thumb — not cross-sectional ranks)
+# ---------------------------------------------------------------------------
+[factors]
+min_gross_profitability = 0.30   # Novy-Marx: gross profit / total assets
+min_greenblatt_roc = 0.25        # EBIT / (net working capital + net PP&E)
+min_earnings_yield = 0.07        # EBIT / enterprise value
+min_shareholder_yield = 0.02     # (dividends + net buybacks) / market cap
+max_asset_growth = 0.20          # Cooper-Gulen-Schill asset growth effect
+
+[health]
+piotroski_strong = 7
+piotroski_weak = 2               # F-score <= this is a red flag
+beneish_threshold = -1.78        # M-score above this suggests possible earnings manipulation
+
+# ---------------------------------------------------------------------------
+# Per-framework signals: score is the pass ratio (0..1), mos is margin of safety (0..1)
+# ---------------------------------------------------------------------------
+[signals.graham]
+strong_buy_score = 0.70
+strong_buy_mos = 0.33          # Graham's one-third margin of safety
+buy_score = 0.60
+buy_mos = 0.15
+sell_mos = -0.30
+sell_score = 0.40
+
+[signals.buffett]
+strong_buy_score = 0.80
+strong_buy_mos = 0.20
+buy_score = 0.65
+buy_mos = 0.0                  # "a wonderful company at a fair price"
+sell_mos = -0.35
+sell_score = 0.40
+
+# ---------------------------------------------------------------------------
+# Combined verdict
+# ---------------------------------------------------------------------------
+[decision]
+strong_buy = 75
+buy = 62
+hold = 45
+sell = 35
+strong_buy_min_mos = 0.20
+buy_min_mos = 0.0
+mos_full_scale = 0.50          # MOS of +50% -> valuation score 100, -50% -> 0
+min_coverage_for_buy = 0.60    # share of criteria that must be evaluable for a BUY
+
+[decision.weights]
+quality = 0.35
+safety = 0.25
+factors = 0.15
+valuation = 0.25

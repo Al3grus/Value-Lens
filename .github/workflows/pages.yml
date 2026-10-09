@@ -1,0 +1,53 @@
+# Builds the website and publishes it to GitHub Pages.
+# One-time setup (README, "Website"): Settings -> Pages -> Source: GitHub Actions, and
+# Settings -> Secrets and variables -> Actions -> Variables: RELAY_URL = your Worker's address.
+name: Website
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0
+      - name: Install
+        run: uv sync --extra dev
+      - name: Test
+        run: uv run pytest -q
+      - name: Build site
+        env:
+          RELAY_URL: ${{ vars.RELAY_URL }}
+        run: |
+          if [ -z "$RELAY_URL" ]; then
+            echo "::error::Set the repository variable RELAY_URL to your relay Worker's https address."
+            exit 1
+          fi
+          uv run python -m valuelens.web.site --relay "$RELAY_URL" --out _site
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

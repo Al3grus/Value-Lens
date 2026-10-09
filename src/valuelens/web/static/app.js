@@ -1,0 +1,284 @@
+// ValueLens page logic. Three stages: credentials -> ticker -> report. All analysis runs in the
+// engine worker (engine.mjs); this file only drives the screen. Credentials live in the worker's
+// memory for this tab and are never written to storage.
+(() => {
+  "use strict";
+  const CONFIG = window.VALUELENS_CONFIG || {};
+  const TICKER_RE = /^[A-Z0-9][A-Z0-9.\-=^]{0,15}$/;
+  const EMAIL_RE = /^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$/;
+  const FRED_RE = /^[a-z0-9]{32}$/;
+  const SPIN = ["|", "/", "-", "\\"];
+  const STEPS = { market: "Market data (Yahoo Finance)", filings: "SEC filings (10-K, 10-Q)", rates: "Interest rates (FRED)", analysis: "Scoring and valuation" };
+  const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const $ = (id) => document.getElementById(id);
+  const txt = (tag, text, cls) => { const n = document.createElement(tag); n.textContent = text; if (cls) n.className = cls; return n; };
+  const S = { verified: false, usage: null, fredMode: "public", checked: null, view: "simple", result: null, busy: false, engine: false };
+  try { if (localStorage.getItem("valuelens.view") === "detailed") S.view = "detailed"; } catch (_) {}
+
+  // ---- engine worker ---------------------------------------------------------------------
+  const worker = new Worker("engine.mjs", { type: "module" });
+  const pending = new Map();
+  let seq = 0;
+  worker.onmessage = (e) => {
+    const m = e.data || {};
+    if (m.boot) return bootStep(m.boot, m.state);
+    const p = pending.get(m.id);
+    if (!p) return;
+    if (m.progress) return p.onProgress && p.onProgress(m.progress);
+    pending.delete(m.id);
+    if (m.usage) setUsage(m.usage);
+    if (m.ok) { if (m.result && m.result.usage) setUsage(m.result.usage); p.resolve(m.result); }
+    else p.reject(new Error(m.error || "Something went wrong. Reload the page."));
+  };
+  worker.onerror = (e) => engineFailed(e.message || "ValueLens could not start in this browser.");
+  function rpc(cmd, arg, onProgress, extra) {
+    const id = ++seq;
+    return new Promise((resolve, reject) => {
+      pending.set(id, { resolve, reject, onProgress });
+      worker.postMessage({ id, cmd, arg, ...extra });
+    });
+  }
+  const booting = rpc("boot", "", null, { config: CONFIG });
+  booting.then(() => { S.engine = true; }).catch((err) => engineFailed(err.message));
+
+  function bootStep() { /* loading runs silently in the background */ }
+  function engineFailed(message) {
+    $("cred-err").textContent = message + " Try reloading, or a current Chrome, Edge, Firefox or Safari.";
+  }
+
+  // ---- stages ------------------------------------------------------------------------------
+  function stage(n) {
+    for (const i of [1, 2, 3]) {
+      $("stage" + i).hidden = i !== n;
+      $("s" + i).className = i === n ? "now" : i < n ? "done" : "";
+    }
+    $("closed").hidden = true;
+    const focus = { 1: "name", 2: "tk" }[n];
+    if (focus) setTimeout(() => $(focus).focus(), 0);
+    paintUsage();
+  }
+
+  // ---- checks list -----------------------------------------------------------------------
+  function checkRows(list, heading, steps) {
+    list.append(txt("li", heading, "head"));
+    for (const s of steps) {
+      const li = document.createElement("li");
+      const cls = s.ok === true ? "ok" : s.ok === false ? "bad" : "na";
+      const mark = s.ok === true ? "[√]" : s.ok === false ? "[×]" : "[!]";
+      li.append(txt("span", mark, "st " + cls), txt("span", s.label, "what"), txt("span", s.detail, "detail"));
+      list.append(li);
+    }
+  }
+  function runningRow(list, heading, label) {
+    list.append(txt("li", heading, "head"));
+    const li = document.createElement("li");
+    li.append(txt("span", reduced ? "[*]" : "[|]", "st run"), txt("span", label, "what"), txt("span", "", "detail"));
+    list.append(li);
+    if (reduced) return () => {};
+    let f = 0;
+    const t = setInterval(() => { f = (f + 1) % SPIN.length; li.firstChild.textContent = `[${SPIN[f]}]`; }, 120);
+    return () => clearInterval(t);
+  }
+
+  // ---- usage: FRED requests left this minute, shown in the top bar -----------------------------
+  function setUsage(u) { S.usage = u; if (u.mode) S.fredMode = u.mode.fred; paintUsage(); }
+  function paintUsage() {
+    const fred = S.usage && S.usage.fred;
+    const show = Boolean(fred && S.verified && S.fredMode === "key");
+    $("st-budget").hidden = !show;
+    if (show) {
+      $("st-budget").textContent = `FRED ${fred.remaining}/${fred.limit} left this min`;
+      $("st-budget").className = fred.remaining < fred.limit * 0.15 ? "bad" : "";
+    }
+  }
+
+  // ---- stage 1: credentials ------------------------------------------------------------------
+  function identity() { return `${$("name").value.trim().replace(/\s+/g, " ")} ${$("email").value.trim()}`; }
+  function unverify() {
+    if (!S.verified && $("cred-go").textContent === "VERIFY") return;
+    S.verified = false; $("cred-go").textContent = "VERIFY"; $("cred-result").hidden = true;
+  }
+  for (const id of ["name", "email", "fred"]) $(id).addEventListener("input", () => { unverify(); $("cred-err").textContent = ""; });
+
+  $("cred-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (S.verified) { showCreds(); stage(2); return; }
+    const name = $("name").value.trim(), email = $("email").value.trim(), fred = $("fred").value.trim().toLowerCase();
+    if (name.length < 2) { $("cred-err").textContent = "Enter your full name."; $("name").focus(); return; }
+    if (!EMAIL_RE.test(email)) { $("cred-err").textContent = "Enter a valid e-mail address, e.g. name@domain.com."; $("email").focus(); return; }
+    if (fred && !FRED_RE.test(fred)) { $("cred-err").textContent = "A FRED key is 32 lower-case letters and digits. Leave it empty to skip."; $("fred").focus(); return; }
+    $("cred-go").disabled = true; $("cred-err").textContent = "";
+    const list = $("cred-checks"); list.replaceChildren(); $("cred-result").hidden = false;
+    let stop = runningRow(list, "SEC EDGAR IDENTITY", "checking");
+    try {
+      await booting;
+      const sec = await rpc("identity", identity());
+      stop(); list.replaceChildren(); checkRows(list, "SEC EDGAR IDENTITY", sec.steps);
+      if (!sec.ok) { $("cred-err").textContent = sec.message; return; }
+      const head = fred ? "FRED API KEY" : "FRED (no key)";
+      const keep = [...list.children];
+      stop = runningRow(list, head, "checking");
+      const fr = await rpc("fred", fred);
+      stop(); list.replaceChildren(...keep); checkRows(list, head, fr.steps);
+      if (!fr.ok) { $("cred-err").textContent = fr.message; return; }
+      S.verified = true;
+      $("cred-go").textContent = "CONTINUE";
+      $("cred-go").focus();
+    } catch (err) {
+      stop(); $("cred-err").textContent = err.message;
+    } finally { $("cred-go").disabled = false; paintUsage(); }
+  });
+  function showCreds() {
+    $("st-creds").hidden = false;
+    $("st-fred").replaceChildren(S.fredMode === "key" ? txt("span", "√ key", "ok") : txt("span", "– public", "dim"));
+    $("cred-cancel").hidden = false;
+  }
+  const change = txt("button", "change", "linkbtn"); change.type = "button";
+  $("st-creds").append("  ", change);
+  change.addEventListener("click", () => { if (!S.busy) stage(1); });
+  $("cred-cancel").addEventListener("click", () => { if (S.verified) stage(2); });
+
+  // ---- stage 2: ticker -------------------------------------------------------------------------
+  function resetCheck() { S.checked = null; $("found").hidden = true; $("run").hidden = true; }
+  $("tk").addEventListener("input", () => {
+    const v = $("tk").value.toUpperCase();
+    if ($("tk").value !== v) $("tk").value = v;
+    resetCheck();
+    $("tk-err").textContent = /[\s,;]/.test(v) ? "Enter one ticker only."
+      : v && !TICKER_RE.test(v) ? "Use letters, digits, '.' and '-', e.g. MSFT, BRK-B." : "";
+  });
+  $("tk-form").addEventListener("submit", (e) => { e.preventDefault(); check(); });
+
+  async function check() {
+    const t = $("tk").value.trim().toUpperCase();
+    if (!TICKER_RE.test(t)) { $("tk-err").textContent = t ? "Enter one valid ticker, e.g. MSFT." : "Type a ticker, e.g. MSFT."; return; }
+    $("tk-check").disabled = true; $("tk-err").textContent = ""; resetCheck();
+    const list = $("tk-checks"); list.replaceChildren(); $("found").hidden = false; $("tk-co").hidden = true;
+    const stop = runningRow(list, t, "checking");
+    try {
+      const v = await rpc("ticker", t);
+      stop(); list.replaceChildren();
+      if ($("tk").value.trim().toUpperCase() !== t) return;
+      checkRows(list, t, v.steps);
+      const d = v.data || {};
+      if (d.name) {
+        $("f-name").textContent = d.name.toUpperCase();
+        const meta = $("f-meta"); meta.replaceChildren();
+        const price = d.price != null ? `${d.currency || ""} ${Number(d.price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`.trim() : null;
+        for (const f of [d.ticker, d.exchange, price]) if (f) meta.append(txt("span", f));
+        $("tk-co").hidden = false;
+      }
+      if (!v.ok) { $("tk-err").textContent = v.message; return; }
+      S.checked = d;
+      $("run").hidden = false; $("run").focus();
+    } catch (err) { stop(); $("tk-err").textContent = err.message; }
+    finally { $("tk-check").disabled = false; }
+  }
+
+  function recent(add) {
+    let list = [];
+    try { list = JSON.parse(localStorage.getItem("valuelens.recent") || "[]"); } catch (_) {}
+    if (add) {
+      list = [add, ...list.filter((x) => x !== add)].slice(0, 6);
+      try { localStorage.setItem("valuelens.recent", JSON.stringify(list)); } catch (_) {}
+    }
+    const box = $("recent");
+    box.replaceChildren(txt("span", "RECENT"));
+    for (const t of list) {
+      if (!TICKER_RE.test(t)) continue;
+      const b = txt("button", t, "btn small"); b.type = "button";
+      b.addEventListener("click", () => { $("tk").value = t; resetCheck(); check(); });
+      box.append(b);
+    }
+    box.hidden = list.length === 0;
+  }
+
+  // ---- stage 3: analysis -------------------------------------------------------------------------
+  $("run").addEventListener("click", async () => {
+    if (!S.checked || S.busy) return;
+    const t = S.checked.ticker;
+    S.busy = true; $("run").disabled = true;
+    stage(3);
+    $("cmd-ticker").textContent = t;
+    $("failure").hidden = true; $("result").hidden = true; $("end").hidden = true;
+    const started = performance.now();
+    const log = { current: null, at: started, done: [] };
+    let frame = 0;
+    const paintLog = () => {
+      $("log").replaceChildren(...Object.entries(STEPS).map(([key, label]) => {
+        const li = document.createElement("li");
+        const done = log.done.find((d) => d.key === key);
+        const running = log.current === key;
+        li.className = done ? "done" : running ? "running" : "";
+        const mark = done ? "[√]" : running ? `[${reduced ? "*" : SPIN[frame]}]` : "[ ]";
+        const secs = done ? `${done.secs.toFixed(1)}s` : running ? `${((performance.now() - log.at) / 1000).toFixed(1)}s` : "";
+        li.append(txt("span", mark, "st"), txt("span", label), txt("span", secs, "secs"));
+        return li;
+      }));
+    };
+    const onProgress = (key) => {
+      const now = performance.now();
+      if (log.current) log.done.push({ key: log.current, secs: (now - log.at) / 1000 });
+      log.current = key; log.at = now; paintLog();
+    };
+    paintLog();
+    const tick = setInterval(() => { frame = (frame + 1) % SPIN.length; paintLog(); }, 120);
+    try {
+      const r = await rpc("analyze", t, onProgress);
+      onProgress(null);
+      $("log").append(txt("li", `done in ${((performance.now() - started) / 1000).toFixed(1)}s`, "summary"));
+      S.result = r;
+      recent(t);
+      paint();
+      $("result").hidden = false;
+    } catch (err) {
+      $("failure").textContent = err.message; $("failure").hidden = false;
+    } finally {
+      clearInterval(tick);
+      S.busy = false; $("run").disabled = false;
+      $("end").hidden = false; paintUsage();
+      $("again").focus({ preventScroll: true });
+    }
+  });
+
+  function paint() {
+    if (!S.result) return;
+    $("tab-simple").setAttribute("aria-selected", String(S.view === "simple"));
+    $("tab-detailed").setAttribute("aria-selected", String(S.view === "detailed"));
+    $("pre").innerHTML = S.result[S.view]; // rich's HTML export: all text is escaped by rich
+  }
+  for (const [id, view] of [["tab-simple", "simple"], ["tab-detailed", "detailed"]]) {
+    $(id).addEventListener("click", () => {
+      S.view = view;
+      try { localStorage.setItem("valuelens.view", view); } catch (_) {}
+      paint();
+    });
+  }
+
+  $("again").addEventListener("click", () => {
+    $("tk").value = ""; resetCheck(); $("tk-err").textContent = "";
+    stage(2); window.scrollTo(0, 0);
+  });
+  $("exit").addEventListener("click", async () => {
+    $("exit").disabled = true;
+    try { await rpc("forget"); } catch (_) { /* nothing to clear */ }
+    for (const id of ["name", "email", "fred"]) $(id).value = "";
+    S.verified = false; S.result = null; $("pre").replaceChildren();
+    for (const i of [1, 2, 3]) $("stage" + i).hidden = true;
+    document.querySelector(".stages").hidden = true; $("st-creds").hidden = true; $("st-budget").hidden = true;
+    $("closed").hidden = false; window.scrollTo(0, 0);
+  });
+  $("restart").addEventListener("click", () => location.reload());
+
+  // ---- tooltips: Escape closes ----------------------------------------------------------------------
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") document.querySelectorAll(".tipwrap").forEach((t) => t.classList.add("closed"));
+  });
+  document.querySelectorAll(".tipwrap").forEach((t) => {
+    t.addEventListener("mouseenter", () => t.classList.remove("closed"));
+    t.addEventListener("focusin", () => t.classList.remove("closed"));
+  });
+
+  recent();
+  stage(1);
+})();

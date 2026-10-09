@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="__CSP__">
+<meta name="referrer" content="no-referrer">
+<title>ValueLens</title>
+<meta name="description" content="Graham and Buffett value analysis of any SEC-listed company, run in your browser with your own free data credentials.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%231C1D20'/%3E%3Ctext x='16' y='23' font-family='monospace' font-size='20' font-weight='700' text-anchor='middle' fill='%23E2BA5C'%3EV%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&display=swap">
+<link rel="stylesheet" href="style.css">
+<script src="config.js"></script>
+<script src="app.js" defer></script>
+</head>
+<body>
+<header class="bar">
+  <span class="brand">VALUELENS<small>equity research terminal</small></span>
+  <ol class="stages" aria-label="Progress">
+    <li id="s1">1 CREDENTIALS</li><li id="s2">2 TICKER</li><li id="s3">3 REPORT</li>
+  </ol>
+  <span class="status" id="status">
+    <span id="st-creds" hidden>SEC <span class="ok">√</span>  FRED <span id="st-fred"></span></span>
+    <span id="st-budget" hidden></span>
+  </span>
+</header>
+
+<main>
+  <!-- ---- stage 1: credentials --------------------------------------------------------- -->
+  <section class="center" id="stage1" aria-labelledby="t1">
+    <form class="panel" id="cred-form" novalidate autocomplete="off">
+      <span class="panel-title" id="t1">CREDENTIALS</span>
+
+      <div class="section">
+        <div class="label">
+          <span class="name">SEC EDGAR IDENTITY</span>
+          <span class="tipwrap">
+            <button class="q" type="button" aria-describedby="tip-sec">[?]</button>
+            <span class="tip" role="tooltip" id="tip-sec">
+              <p><b>What it is.</b> The SEC's free database of company filings: 10+ years of income statements, balance sheets and cash flows for every US-listed company.</p>
+              <p><b>How to get it.</b> Nothing to sign up for. The SEC asks every automated tool to say who is behind it, so type your own name and an e-mail address you read.</p>
+              <p><b>How it is checked.</b> We confirm the e-mail's domain receives mail and that the SEC accepts the identity. Nothing is stored: it lives in this tab only and is sent to sec.gov with each request. <a href="https://www.sec.gov/search-filings/edgar-application-programming-interfaces" target="_blank" rel="noopener noreferrer">SEC access rules</a></p>
+            </span>
+          </span>
+          <span class="tag req">required</span>
+        </div>
+        <div class="grid2">
+          <label class="prompt"><input id="name" type="text" maxlength="80" spellcheck="false"
+            placeholder="your full name" aria-label="Your full name"></label>
+          <label class="prompt"><input id="email" type="email" maxlength="120" spellcheck="false"
+            placeholder="your e-mail" aria-label="Your e-mail address"></label>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="label">
+          <span class="name">FRED API KEY</span>
+          <span class="tipwrap">
+            <button class="q" type="button" aria-describedby="tip-fred">[?]</button>
+            <span class="tip" role="tooltip" id="tip-fred">
+              <p><b>What it is.</b> The St. Louis Fed's economic database. ValueLens reads two rates from it: the AAA corporate bond yield (Graham's formula) and the 10-year Treasury yield (the discount rate).</p>
+              <p><b>How to get it.</b> Free: create an account at fredaccount.stlouisfed.org, open <a href="https://fredaccount.stlouisfed.org/apikeys" target="_blank" rel="noopener noreferrer">API Keys</a>, request a key and paste the 32-character code here.</p>
+              <p><b>Limit.</b> 120 requests per minute per key; one analysis uses 2, and rates are cached for a day. Without a key the same rates come from FRED's public download.</p>
+            </span>
+          </span>
+          <span class="tag">optional</span>
+        </div>
+        <label class="prompt"><input id="fred" type="password" maxlength="40" spellcheck="false" autocomplete="off"
+          placeholder="32 characters, or leave empty" aria-label="FRED API key (optional)"></label>
+      </div>
+
+      <div class="result-box" id="cred-result" hidden aria-live="polite">
+        <ol class="checks" id="cred-checks"></ol>
+        <p class="fineprint">We cannot read your inbox: the e-mail check confirms the domain accepts mail and that the SEC accepts the identity, not that the mailbox is yours. Use your own.</p>
+      </div>
+
+      <p class="err" id="cred-err" aria-live="polite"></p>
+      <div class="row" style="margin-top:6px">
+        <button class="btn primary" type="submit" id="cred-go">VERIFY</button>
+        <button class="btn" type="button" id="cred-cancel" hidden>BACK</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- ---- stage 2: ticker ---------------------------------------------------------------- -->
+  <section class="center" id="stage2" hidden aria-labelledby="t2">
+    <div class="panel">
+      <span class="panel-title" id="t2">SECURITY LOOKUP</span>
+      <form id="tk-form" novalidate autocomplete="off">
+        <div class="label">
+          <span class="name">TICKER</span>
+          <span class="tipwrap">
+            <button class="q" type="button" aria-describedby="tip-tk">[?]</button>
+            <span class="tip" role="tooltip" id="tip-tk">
+              <p>One US-listed company, written as on Yahoo Finance: MSFT, BRK-B, KO.</p>
+              <p>CHECK makes one small price request and looks the company up in the SEC's ticker list (downloaded once a week). The full analysis only runs after a successful check, so a typo never spends your requests.</p>
+            </span>
+          </span>
+        </div>
+        <div class="row" style="margin-top:6px">
+          <label class="prompt" style="flex:1;margin-top:0"><input id="tk" type="text" maxlength="16"
+            spellcheck="false" autocapitalize="characters" placeholder="MSFT" aria-label="Ticker"></label>
+          <button class="btn" type="submit" id="tk-check">CHECK</button>
+        </div>
+        <p class="err" id="tk-err" aria-live="polite"></p>
+      </form>
+      <div class="found result-box" id="found" hidden aria-live="polite">
+        <ol class="checks" id="tk-checks"></ol>
+        <div id="tk-co" hidden>
+          <div class="co" id="f-name"></div>
+          <div class="meta" id="f-meta"></div>
+        </div>
+        <div class="row"><button class="btn primary" type="button" id="run" hidden>RUN ANALYSIS</button></div>
+      </div>
+      <div class="recent" id="recent" hidden></div>
+    </div>
+  </section>
+
+  <!-- ---- stage 3: report ---------------------------------------------------------------- -->
+  <section class="work" id="stage3" hidden aria-labelledby="t3">
+    <p class="cmd" id="t3">&gt; analyse <b id="cmd-ticker"></b></p>
+    <ol class="log" id="log" aria-live="polite"></ol>
+    <div class="failure" id="failure" hidden></div>
+    <div id="result" hidden>
+      <div class="tabs" role="tablist" aria-label="Report view">
+        <button class="btn small tab" role="tab" type="button" id="tab-simple" aria-controls="readout">SIMPLE</button>
+        <button class="btn small tab" role="tab" type="button" id="tab-detailed" aria-controls="readout">DETAILED</button>
+      </div>
+      <div class="readout" id="readout" role="tabpanel" tabindex="0"><pre id="pre"></pre></div>
+    </div>
+    <div class="end" id="end" hidden>
+      <button class="btn" type="button" id="exit">EXIT</button>
+      <button class="btn primary" type="button" id="again">NEW TICKER</button>
+    </div>
+  </section>
+
+  <!-- ---- closed ------------------------------------------------------------------------- -->
+  <section class="center" id="closed" hidden>
+    <div class="bye">
+      <h1>SESSION CLOSED</h1>
+      <p>Your credentials have been cleared from this tab.</p>
+      <div class="row" style="justify-content:center"><button class="btn primary" type="button" id="restart">START AGAIN</button></div>
+    </div>
+  </section>
+</main>
+<footer class="foot">Educational only. Not investment advice. Data: SEC EDGAR, FRED, Yahoo Finance. Runs in your browser; credentials are never stored.</footer>
+</body>
+</html>

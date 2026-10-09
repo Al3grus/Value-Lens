@@ -1,0 +1,22 @@
+// Cloudflare Worker that relays the website's data requests (see README "Website").
+// Deploy:  npx wrangler login   then   npx wrangler deploy
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "valuelens-relay",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-09",
+  "vars": {
+    // The website origin(s) allowed to use this relay, comma-separated, no trailing slash.
+    // For GitHub Pages this is https://<your-github-user-or-org>.github.io
+    "ALLOWED_ORIGINS": "https://al3grus.github.io"
+  },
+  // Per-visitor limit so one visitor cannot use up the free plan's 100,000 requests per day.
+  // namespace_id is any number unique within your Cloudflare account.
+  "ratelimits": [
+    {
+      "name": "RATE_LIMITER",
+      "namespace_id": "1001",
+      "simple": { "limit": 120, "period": 60 }
+    }
+  ]
+}

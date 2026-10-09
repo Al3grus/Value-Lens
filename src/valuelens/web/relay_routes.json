@@ -1,0 +1,61 @@
+{
+  "_comment": "Single source of truth for the relay. Read by the Cloudflare Worker (relay/src/index.js) and the local Python relay (valuelens/web/relay.py). Only these paths and query parameters are forwarded.",
+  "identity_pattern": "^\\S.{0,120}\\s[A-Za-z0-9._%+\\-]+@[A-Za-z0-9.\\-]+\\.[A-Za-z]{2,}$",
+  "routes": {
+    "sec/www/": {
+      "upstream": "https://www.sec.gov/",
+      "paths": ["^files/company_tickers\\.json$"],
+      "params": [],
+      "methods": ["GET", "HEAD"],
+      "identity": true,
+      "edge_cache_s": 21600
+    },
+    "sec/data/": {
+      "upstream": "https://data.sec.gov/",
+      "paths": ["^submissions/CIK\\d{10}\\.json$", "^api/xbrl/companyfacts/CIK\\d{10}\\.json$"],
+      "params": [],
+      "methods": ["GET"],
+      "identity": true,
+      "edge_cache_s": 21600
+    },
+    "fred/api/": {
+      "upstream": "https://api.stlouisfed.org/",
+      "paths": ["^fred/series/observations$"],
+      "params": ["series_id", "file_type", "sort_order", "limit"],
+      "methods": ["GET"],
+      "key_header": "X-FRED-Key",
+      "key_param": "api_key"
+    },
+    "fred/web/": {
+      "upstream": "https://fred.stlouisfed.org/",
+      "paths": ["^graph/fredgraph\\.csv$"],
+      "params": ["id"],
+      "methods": ["GET"],
+      "edge_cache_s": 21600
+    },
+    "yahoo/q1/": {
+      "upstream": "https://query1.finance.yahoo.com/",
+      "paths": ["^v8/finance/chart/(?:[A-Za-z0-9.=^\\-]|%5[Ee]|%3[Dd]){1,40}$"],
+      "params": ["range", "interval", "events", "period1", "period2", "includeAdjustedClose"],
+      "methods": ["GET"],
+      "browser_agent": true
+    },
+    "yahoo/q2/": {
+      "upstream": "https://query2.finance.yahoo.com/",
+      "paths": ["^v10/finance/quoteSummary/(?:[A-Za-z0-9.=^\\-]|%5[Ee]|%3[Dd]){1,40}$"],
+      "params": ["modules"],
+      "methods": ["GET"],
+      "browser_agent": true,
+      "yahoo_crumb": true
+    },
+    "dns/": {
+      "upstream": "https://cloudflare-dns.com/",
+      "paths": ["^dns-query$"],
+      "params": ["name", "type"],
+      "methods": ["GET"],
+      "accept": "application/dns-json"
+    }
+  },
+  "browser_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+  "relay_agent": "ValueLens relay (+https://github.com)"
+}
