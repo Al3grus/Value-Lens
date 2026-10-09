@@ -12,7 +12,8 @@ using Benjamin Graham's and Warren Buffett's rules, and explains why in plain En
 2. Type a ticker, such as `MSFT`, and press **CHECK**, then **RUN ANALYSIS**.
 3. Read the simple report, or switch to **DETAILED** for every number.
 
-No account, no sign-up and nothing to install: it runs in your browser.
+No account, no sign-up and nothing to install: it runs in your browser. A Cloudflare check
+confirms you are a person; most visitors never see it.
 
 ## What you get
 

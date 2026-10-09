@@ -3,6 +3,7 @@ glue and a full analysis through a fake relay transport (the exact code path Pyo
 
 from __future__ import annotations
 
+import hashlib
 import json
 import zipfile
 from io import BytesIO
@@ -451,6 +452,47 @@ def test_relay_limit_is_reported_as_relay_limit():
         XhrTransport("/relay", lambda: Limited(None, [])).request("GET", TICKERS_URL)
 
 
+class RefusedSession(FakeXhr):
+    def send(self):
+        self.log.append((self.method, self.url, dict(self.headers)))
+        self.status, self.responseText = 401, "{}"
+
+    def getResponseHeader(self, name):
+        return "1" if name == "X-Relay-Session-Expired" else None
+
+
+def test_relay_session_is_sent_with_every_request():
+    from valuelens.web.browser import XhrTransport
+
+    log = []
+    xt = XhrTransport("/relay", lambda: FakeXhr(None, log))
+    xt.request("GET", TICKERS_URL, headers={"User-Agent": IDENT})
+    assert "X-Relay-Session" not in log[0][2]  # no Turnstile: no session
+    xt.session = "1760000000.abcdefghijklmnop.sig"
+    xt.request("GET", TICKERS_URL, headers={"User-Agent": IDENT})
+    assert log[1][2] == {"X-SEC-Identity": IDENT, "X-Relay-Session": "1760000000.abcdefghijklmnop.sig"}
+
+
+def test_refused_relay_session_is_reported_to_the_page(tmp_path):
+    from valuelens.web import browser
+    from valuelens.web.browser import XhrTransport
+
+    log = []
+    xt = XhrTransport("/relay", lambda: RefusedSession(None, log))
+    with pytest.raises(TransportError, match="security check expired"):
+        xt.request("GET", TICKERS_URL)
+    assert xt.session_expired
+
+    xt = XhrTransport("/relay", lambda: RefusedSession(None, log))
+    browser.start("/relay", str(tmp_path / "cache"), transport=xt)
+    try:
+        assert json.loads(browser.call("session", "s1"))["ok"] and xt.session == "s1"
+        assert json.loads(browser.call("identity", IDENT))["session_expired"] is True
+        assert "session_expired" not in json.loads(browser.call("usage"))  # reported once
+    finally:
+        browser._session = None
+
+
 def test_non_latin_names_are_folded_for_the_header():
     from valuelens.data.sec import ascii_identity
 
@@ -650,41 +692,122 @@ def test_python_bundle_contents():
     assert python_bundle() == data  # deterministic
 
 
-def test_build_site(tmp_path):
-    from valuelens.web.site import build_site
+@pytest.fixture
+def cdn(monkeypatch):
+    """Pyodide's core as jsDelivr serves it, offline: small stand-in files whose hashes are pinned."""
+    from valuelens.data.http import HttpResponse
+    from valuelens.web import site
 
-    out = build_site(tmp_path / "site", "https://relay.example.workers.dev/")
-    files = {p.relative_to(out).as_posix() for p in out.rglob("*") if p.is_file()}
-    assert {"index.html", "app.js", "engine.mjs", "style.css", "config.js"} <= files
-    cfg = (out / "config.js").read_text()
-    assert '"relay": "https://relay.example.workers.dev"' in cfg and "pyodide/v" in cfg
+    files = {name: f"stand-in {name}".encode() for name in site.PYODIDE_CORE}
+    monkeypatch.setattr(site, "PYODIDE_CORE", {n: hashlib.sha256(b).hexdigest() for n, b in files.items()})
+
+    class Cdn:
+        def __init__(self):
+            self.calls = []
+
+        def request(self, method, url, *, params=None, headers=None):
+            self.calls.append(url)
+            name = url.removeprefix(site.PYODIDE_CDN)
+            return HttpResponse(200 if name in files else 404, "", url, content=files.get(name, b""))
+
+        def close(self):
+            pass
+
+    return Cdn(), files
+
+
+def config_of(out) -> dict:
+    return json.loads((out / "config.js").read_text().split("=", 1)[1].rstrip(";\n"))
+
+
+def test_build_site(tmp_path, cdn):
+    from valuelens.web.site import PYODIDE_CDN, PYODIDE_DIR, build_site
+
+    transport, files = cdn
+    out = build_site(tmp_path / "site", "https://relay.example.workers.dev/", transport=transport)
+    names = {p.relative_to(out).as_posix() for p in out.rglob("*") if p.is_file()}
+    assert {"index.html", "app.js", "engine.mjs", "style.css", "config.js"} <= names
+    for name, body in files.items():  # Pyodide's core is served by the site itself
+        assert (out / PYODIDE_DIR / name).read_bytes() == body
+    conf = config_of(out)
+    assert conf["relay"] == "https://relay.example.workers.dev"
+    assert conf["pyodide"] == PYODIDE_DIR and conf["packages"] == PYODIDE_CDN
+    assert "turnstile" not in conf
     page = (out / "index.html").read_text()
     assert "__CSP__" not in page
-    assert "connect-src 'self' https://cdn.jsdelivr.net https://relay.example.workers.dev" in page
-    assert "'wasm-unsafe-eval' https://cdn.jsdelivr.net" in page
-    conf = json.loads(cfg.split("=", 1)[1].rstrip(";\n"))
+    assert "script-src 'self' 'wasm-unsafe-eval';" in page  # no code from the CDN
+    assert "connect-src 'self' https://cdn.jsdelivr.net https://relay.example.workers.dev;" in page
+    assert "challenges.cloudflare.com" not in page
     assert (out / conf["bundle"]).is_file()
     with pytest.raises(SystemExit):
-        build_site(tmp_path / "x", "http://insecure.example")
+        build_site(tmp_path / "x", "http://insecure.example", transport=transport)
 
 
-def test_site_files_carry_the_site_version(tmp_path):
+def test_build_refuses_a_pyodide_file_that_does_not_match_its_hash(tmp_path, cdn, monkeypatch):
+    from valuelens.web import site
+
+    transport, _ = cdn
+    monkeypatch.setitem(site.PYODIDE_CORE, "pyodide.asm.wasm", "0" * 64)
+    with pytest.raises(SystemExit, match=r"pyodide\.asm\.wasm does not match"):
+        site.build_site(tmp_path / "site", "https://relay.example.workers.dev", transport=transport)
+    assert not (tmp_path / "site" / site.PYODIDE_DIR / "pyodide.asm.wasm").exists()
+
+
+def test_build_site_with_turnstile(tmp_path, cdn):
+    from valuelens.web.site import TURNSTILE, build_site
+
+    transport, _ = cdn
+    key = "0x4AAAAAAAtest_Key-1"
+    out = build_site(
+        tmp_path / "site", "https://relay.example.workers.dev", turnstile=key, transport=transport
+    )
+    assert config_of(out)["turnstile"] == key
+    page = (out / "index.html").read_text()
+    assert f"script-src 'self' 'wasm-unsafe-eval' {TURNSTILE};" in page
+    assert f"frame-src {TURNSTILE};" in page
+    with pytest.raises(SystemExit, match="site key"):
+        build_site(
+            tmp_path / "x",
+            "https://relay.example.workers.dev",
+            turnstile='x"; alert(1)//',
+            transport=transport,
+        )
+
+
+def test_build_site_can_load_pyodide_from_a_url(tmp_path, cdn):
+    from valuelens.web.site import PYODIDE_CDN, build_site
+
+    transport, _ = cdn
+    out = build_site(
+        tmp_path / "site", "https://relay.example.workers.dev", pyodide=PYODIDE_CDN, transport=transport
+    )
+    assert transport.calls == [] and not (out / "pyodide").exists()
+    assert config_of(out)["pyodide"] == PYODIDE_CDN and "packages" not in config_of(out)
+    assert "'wasm-unsafe-eval' https://cdn.jsdelivr.net;" in (out / "index.html").read_text()
+
+
+def test_site_files_carry_the_site_version(tmp_path, cdn):
     """A browser that has an old page cached must never mix it with new code (or the reverse):
     every file the page loads is named with the site version, and version.json tells an old
     page that a newer site exists."""
     from valuelens.web.site import build_site
 
-    out = build_site(tmp_path / "a", "https://relay.example.workers.dev")
+    transport, _ = cdn
+    out = build_site(tmp_path / "a", "https://relay.example.workers.dev", transport=transport)
     version = json.loads((out / "version.json").read_text())["version"]
     page = (out / "index.html").read_text()
     for ref in ("style.css", "config.js", "app.js"):
         assert f"{ref}?v={version}" in page
     conf = json.loads((out / "config.js").read_text().split("=", 1)[1].rstrip(";\n"))
     assert conf["version"] == version and conf["engine"] == f"engine.mjs?v={version}"
-    again = build_site(tmp_path / "b", "https://relay.example.workers.dev")
+    again = build_site(tmp_path / "b", "https://relay.example.workers.dev", transport=transport)
     assert json.loads((again / "version.json").read_text())["version"] == version  # deterministic
-    other = build_site(tmp_path / "c", "https://other-relay.example.workers.dev")
+    other = build_site(tmp_path / "c", "https://other-relay.example.workers.dev", transport=transport)
     assert json.loads((other / "version.json").read_text())["version"] != version
+    keyed = build_site(
+        tmp_path / "d", "https://relay.example.workers.dev", turnstile="0x4AAAAAAAkey", transport=transport
+    )
+    assert json.loads((keyed / "version.json").read_text())["version"] != version
 
 
 def test_local_server_serves_site_and_relay():

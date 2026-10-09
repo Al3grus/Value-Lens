@@ -24,6 +24,7 @@ class HttpResponse:
     text: str
     url: str
     headers: dict[str, str] = field(default_factory=dict)
+    content: bytes = b""  # raw body, for binary downloads (HttpxTransport only)
 
     def json(self) -> Any:
         return json.loads(self.text)
@@ -80,7 +81,7 @@ class HttpxTransport:
         except self._httpx.HTTPError as exc:
             # Without the query string: it may hold an API key.
             raise TransportError(f"{method} {url.split('?')[0]}: {type(exc).__name__}") from exc
-        return HttpResponse(resp.status_code, resp.text, str(resp.url), dict(resp.headers))
+        return HttpResponse(resp.status_code, resp.text, str(resp.url), dict(resp.headers), resp.content)
 
     def close(self) -> None:
         self._client.close()

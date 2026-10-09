@@ -6,6 +6,10 @@
 // nothing. The SEC identity arrives as X-SEC-Identity (browsers cannot set User-Agent) and leaves
 // as the User-Agent the SEC requires. Interest rates come from FRED's public download, so no
 // API key ever passes through here.
+//
+// With the secrets TURNSTILE_SECRET and SESSION_KEY set, it serves only browsers that passed
+// Cloudflare Turnstile: the page swaps a Turnstile token for a signed one-hour session
+// (POST /session) and sends it as X-Relay-Session, and the rate limit counts per session.
 
 import SPEC from "../../src/valuelens/web/relay_routes.json" with { type: "json" };
 
@@ -18,11 +22,78 @@ const ROUTES = Object.entries(SPEC.routes).map(([prefix, r]) => ({
 const YAHOO_COOKIE_URL = "https://fc.yahoo.com";
 const YAHOO_CRUMB_URL = "https://query1.finance.yahoo.com/v1/test/getcrumb";
 const CRUMB_TTL_MS = 3600 * 1000;
+const SITEVERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
+const SESSION_TTL_S = 3600;
+const MAX_TOKEN_BYTES = 4096; // Turnstile tokens are at most 2048 characters
 
 let crumbCache = null; // { cookie, crumb, at } — per isolate, refreshed on 401/403
+let hmacCache = null; // { secret, key } — per isolate
 
 export function resetCrumb() {
   crumbCache = null;
+}
+
+// ---- sessions ------------------------------------------------------------------------------
+// A session is "<expiry>.<id>.<HMAC-SHA256 of both>": checked without storage, cannot be forged
+// without SESSION_KEY, and its id keys the rate limit.
+const enc = new TextEncoder();
+const b64url = (bytes) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+const unb64url = (s) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
+const SESSION_RE = /^(\d{1,12})\.([A-Za-z0-9_-]{16})\.([A-Za-z0-9_-]{43})$/;
+
+function sessionsRequired(env) {
+  return Boolean(env.TURNSTILE_SECRET && env.SESSION_KEY);
+}
+
+async function hmacKey(secret) {
+  if (!hmacCache || hmacCache.secret !== secret) {
+    const key = await crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
+    hmacCache = { secret, key };
+  }
+  return hmacCache.key;
+}
+
+export async function newSession(secret, now = Date.now()) {
+  const body = `${Math.floor(now / 1000) + SESSION_TTL_S}.${b64url(crypto.getRandomValues(new Uint8Array(12)))}`;
+  const sig = new Uint8Array(await crypto.subtle.sign("HMAC", await hmacKey(secret), enc.encode(body)));
+  return `${body}.${b64url(sig)}`;
+}
+
+/** The session id when `token` is a session this relay signed and it has not expired, else null. */
+export async function readSession(secret, token, now = Date.now()) {
+  const m = SESSION_RE.exec(token || "");
+  if (!m || Number(m[1]) * 1000 <= now) return null;
+  const ok = await crypto.subtle.verify("HMAC", await hmacKey(secret), unb64url(m[3]), enc.encode(`${m[1]}.${m[2]}`));
+  return ok ? m[2] : null;
+}
+
+async function turnstilePassed(fetchFn, secret, token, ip) {
+  const body = new URLSearchParams({ secret, response: token });
+  if (ip) body.set("remoteip", ip);
+  const res = await fetchFn(SITEVERIFY_URL, { method: "POST", body });
+  const out = await res.json().catch(() => ({}));
+  return out.success === true;
+}
+
+async function startSession(request, env, cors, fetchFn) {
+  if (request.method !== "POST") return json(405, { error: "Method not allowed." }, cors);
+  if (!sessionsRequired(env)) return json(404, { error: "This relay does not use sessions." }, cors);
+  const ip = request.headers.get("CF-Connecting-IP") || "";
+  if (env.SESSION_LIMITER) {
+    const { success } = await env.SESSION_LIMITER.limit({ key: ip || "unknown" });
+    if (!success) return json(429, { error: "Too many security checks from this address. Wait a minute." }, cors);
+  }
+  if (Number(request.headers.get("Content-Length") || 0) > MAX_TOKEN_BYTES) return json(413, { error: "Token too large." }, cors);
+  const token = (await request.text()).trim();
+  if (!token || token.length > MAX_TOKEN_BYTES) return json(400, { error: "Missing security check token." }, cors);
+  let passed;
+  try {
+    passed = await turnstilePassed(fetchFn, env.TURNSTILE_SECRET, token, ip);
+  } catch (err) {
+    return json(502, { error: "The security check could not be confirmed. Try again." }, cors);
+  }
+  if (!passed) return json(403, { error: "The security check failed. Reload the page and try again." }, cors);
+  return json(200, { session: await newSession(env.SESSION_KEY), expires_in: SESSION_TTL_S }, cors);
 }
 
 function allowedOrigins(env) {
@@ -34,7 +105,7 @@ function allowedOrigins(env) {
 
 function corsFor(origin, env) {
   if (!origin || !allowedOrigins(env).includes(origin)) return null;
-  return { "Access-Control-Allow-Origin": origin, "Access-Control-Expose-Headers": "X-Relay-Limit, X-Relay-Cache", Vary: "Origin" };
+  return { "Access-Control-Allow-Origin": origin, "Access-Control-Expose-Headers": "X-Relay-Limit, X-Relay-Cache, X-Relay-Session-Expired", Vary: "Origin" };
 }
 
 function json(status, body, cors, extra = {}) {
@@ -82,19 +153,30 @@ export async function handle(request, env = {}, ctx = {}, deps = {}) {
       headers: {
         ...cors,
         "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
-        "Access-Control-Allow-Headers": "X-SEC-Identity, Accept",
+        "Access-Control-Allow-Headers": "X-SEC-Identity, X-Relay-Session, Accept",
         "Access-Control-Max-Age": "86400",
       },
     });
   }
   if (url.pathname === "/health") {
-    return json(200, { ok: true, service: "valuelens-relay", rate_limit: env.RATE_LIMITER ? "120 requests per minute per visitor" : "none" }, cors);
+    return json(200, {
+      ok: true,
+      service: "valuelens-relay",
+      rate_limit: env.RATE_LIMITER ? "120 requests per minute per visitor" : "none",
+      sessions: sessionsRequired(env) ? "Cloudflare Turnstile" : "none",
+    }, cors);
   }
   if (!cors) return json(403, { error: "This relay only serves the ValueLens website." });
+  if (url.pathname === "/session") return startSession(request, env, cors, fetchFn);
 
+  let visitor = request.headers.get("CF-Connecting-IP") || "unknown";
+  if (sessionsRequired(env)) {
+    const id = await readSession(env.SESSION_KEY, request.headers.get("X-Relay-Session"));
+    if (!id) return json(401, { error: "Security check missing or expired." }, cors, { "X-Relay-Session-Expired": "1" });
+    visitor = `session:${id}`;
+  }
   if (env.RATE_LIMITER) {
-    const key = request.headers.get("CF-Connecting-IP") || "unknown";
-    const { success } = await env.RATE_LIMITER.limit({ key });
+    const { success } = await env.RATE_LIMITER.limit({ key: visitor });
     if (!success) {
       return json(429, { error: "Relay limit reached: 120 requests per minute. Wait a minute." }, cors, { "X-Relay-Limit": "1" });
     }

@@ -12,4 +12,5 @@ valuelens.toml
 _site/
 relay/node_modules/
 relay/.wrangler/
+relay/.dev.vars
 relay/dist/

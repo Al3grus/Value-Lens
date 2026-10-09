@@ -8,7 +8,8 @@ site locally with a Python relay).
 ## Commands
 - Install: `uv sync --extra dev` (uv manages Python and .venv; commit `uv.lock`)
 - Website locally: `uv run valuelens-dashboard` (site + local relay on 127.0.0.1:8765)
-- Build the static site: `uv run python -m valuelens.web.site --relay https://<worker> --out _site`
+- Build the static site: `uv run python -m valuelens.web.site --relay https://<worker> --turnstile <sitekey> --out _site`
+  (downloads Pyodide's core and stops unless it matches the hashes in `site.PYODIDE_CORE`)
 - Relay tests: `cd relay && node --test`; deploy: `npx wrangler deploy`
 - Run: `uv run valuelens MSFT` / `--json` (needs `[sec] user_agent` in valuelens.toml or
   `VALUELENS_SEC_USER_AGENT="Name email"`)
@@ -19,9 +20,20 @@ site locally with a Python relay).
   (`.github/workflows/pages.yml`, runs on push to main); it needs the repository variable
   `RELAY_URL` = the relay Worker's https address (`gh variable set RELAY_URL --body <url>`).
 - Relay: `cd relay; npx wrangler deploy`. `ALLOWED_ORIGINS` in `relay/wrangler.jsonc` is the
-  site origin (`https://al3grus.github.io`, no path). Free plan: 100,000 requests/day; each
-  visitor is limited to 120/min by the `RATE_LIMITER` binding.
+  site origin (`https://al3grus.github.io`, no path). Free plan: 100,000 requests/day (refused
+  requests count too); each session is limited to 120/min by `RATE_LIMITER`, new sessions to
+  10/min per IP by `SESSION_LIMITER`.
+- Turnstile: widget "ValueLens" (managed, hostname al3grus.github.io) on the Al3grus Cloudflare
+  account (`npx wrangler turnstile widget list`). Its site key is the repository variable
+  `TURNSTILE_SITEKEY`; the relay has the secrets `TURNSTILE_SECRET` (widget secret) and
+  `SESSION_KEY` (random). With both secrets set the relay requires a session; the page treats a
+  404 from `/session` as "relay without sessions". Kill switch: `npx wrangler secret delete
+  TURNSTILE_SECRET`. Turning it on: deploy the relay, push the site, then put the secrets.
 - Deploy order when routes change: push the site first, then deploy the relay.
+- Pyodide upgrade: change `PYODIDE_VERSION` in `web/site.py` and re-pin `PYODIDE_CORE` from the
+  files in `pyodide-core-<version>.tar.bz2` on Pyodide's GitHub release (they must equal jsDelivr's).
+- Repository security: Actions are pinned to commit hashes (Dependabot updates them, with a
+  7-day cooldown), CodeQL and private vulnerability reporting are on, `SECURITY.md` says how to report.
 
 ## Architecture
 - `data/` — network + normalisation only. `sec.py` parses XBRL companyfacts (annual = 340–390-day
@@ -46,12 +58,18 @@ site locally with a Python relay).
   browser answers stages 1–2 before those finish downloading (`tests/test_web.py` enforces it).
 - `web/` — `static/` (index.html, app.js, engine.mjs worker, style.css; no build step, CSP meta),
   `render.py` (report as HTML; borders, bars and gauge are CSS `.rp` rules in style.css, never
-  box-drawing characters; every text node html-escaped), `session.py` (one visitor, identity in memory only), `browser.py` (Pyodide entry points),
+  box-drawing characters; every text node html-escaped), `session.py` (one visitor, identity in memory only), `browser.py` (Pyodide entry points;
+  `XhrTransport` sends the relay session as `X-Relay-Session`, and a refused session comes back to
+  app.js as `session_expired`, which gets a new Turnstile token on the next press),
   `relay.py` + `relay_routes.json` (the one allow-list, also imported by `relay/src/index.js`;
   keep `browser.ROUTES` in sync), `site.py` (static build + Python zip, Pyodide version pin; the
-  page loads its files as `name?v=<site version>` and checks `version.json` uncached, so a tab
-  restored from cache updates itself), `server.py` (local, `no-store`, no version).
+  site serves Pyodide's core from `pyodide/<version>/`, so the CSP allows scripts only from 'self'
+  and Turnstile; numpy/pandas come from jsDelivr, checked by the browser against the lock file's
+  SHA-256; the page loads its files as `name?v=<site version>` and checks `version.json` uncached,
+  so a tab restored from cache updates itself), `server.py` (local, `no-store`, no version, Pyodide
+  from jsDelivr, no Turnstile).
 - `relay/` — Cloudflare Worker (wrangler.jsonc), node:test tests. CORS only for ALLOWED_ORIGINS.
+  `POST /session` swaps a Turnstile token (siteverify) for an HMAC-signed one-hour session.
 - Browser target is Pyodide (Python 3.14, pandas 3.0.x, numpy 2.4.x); CI tests 3.14.
 - HTTP client is `httpx2` (maintained successor of httpx, also what Starlette's TestClient uses).
 - Report glyphs are restricted to WGL4 (`style.WGL4_SAFE` + light box drawing) so borders align

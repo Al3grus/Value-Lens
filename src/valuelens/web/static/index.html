@@ -27,6 +27,12 @@
 </header>
 
 <main>
+  <!-- ---- Cloudflare Turnstile: visible only when Cloudflare asks for a click ---------------- -->
+  <div class="human">
+    <p class="help" id="human" hidden>Cloudflare asks for one click to confirm you are a person.</p>
+    <div id="human-box"></div>
+  </div>
+
   <!-- ---- stage 1: credentials --------------------------------------------------------- -->
   <section class="center" id="stage1" aria-labelledby="t1">
     <form class="panel" id="cred-form" novalidate autocomplete="off">

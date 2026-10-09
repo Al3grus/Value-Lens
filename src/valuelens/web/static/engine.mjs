@@ -19,8 +19,11 @@ function syncfs(populate) {
 async function boot(config) {
   const step = (name, state) => self.postMessage({ boot: name, state });
   step("python", "run");
-  const { loadPyodide } = await import(config.pyodide + "pyodide.mjs");
-  pyodide = await loadPyodide({ indexURL: config.pyodide });
+  // A relative address is Pyodide's core served (and hash-checked) by this site; numpy and pandas
+  // then download from config.packages, each checked against the hash in pyodide-lock.json.
+  const indexURL = new URL(config.pyodide, self.location.href).href;
+  const { loadPyodide } = await import(indexURL + "pyodide.mjs");
+  pyodide = await loadPyodide(config.packages ? { indexURL, packageBaseUrl: config.packages } : { indexURL });
   step("python", "done");
 
   step("valuelens", "run");
@@ -38,7 +41,7 @@ async function boot(config) {
   step("valuelens", "done");
   step("numpy+pandas", "run");
   // loadPackage only warns when a download fails, so confirm with an import.
-  heavy = pyodide.loadPackage(["numpy", "pandas"], { messageCallback: () => {} })
+  heavy = pyodide.loadPackage(["numpy", "pandas"], { checkIntegrity: true, messageCallback: () => {} })
     .then(() => pyodide.runPythonAsync("import numpy, pandas"))
     .then(
       () => step("numpy+pandas", "done"),

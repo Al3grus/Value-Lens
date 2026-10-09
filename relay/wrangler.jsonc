@@ -1,5 +1,8 @@
 // Cloudflare Worker that relays the website's data requests (see CLAUDE.md, "Publishing").
 // Deploy:  npx wrangler login   then   npx wrangler deploy
+// Turnstile (optional): npx wrangler secret put TURNSTILE_SECRET   (the widget's secret key)
+//                       npx wrangler secret put SESSION_KEY        (any long random string)
+// With both set, only browsers that pass Turnstile get a relay session.
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "valuelens-relay",
@@ -10,13 +13,20 @@
     // For GitHub Pages this is https://<your-github-user-or-org>.github.io
     "ALLOWED_ORIGINS": "https://al3grus.github.io"
   },
-  // Per-visitor limit so one visitor cannot use up the free plan's 100,000 requests per day.
+  // Per-visitor limits so one visitor cannot use up the free plan's 100,000 requests per day.
   // namespace_id is any number unique within your Cloudflare account.
   "ratelimits": [
     {
+      // Relayed requests, per session (per IP address when Turnstile is off).
       "name": "RATE_LIMITER",
       "namespace_id": "1001",
       "simple": { "limit": 120, "period": 60 }
+    },
+    {
+      // New sessions (Turnstile checks), per IP address.
+      "name": "SESSION_LIMITER",
+      "namespace_id": "1002",
+      "simple": { "limit": 10, "period": 60 }
     }
   ]
 }

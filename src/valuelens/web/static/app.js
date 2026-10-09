@@ -25,6 +25,7 @@
     if (!p) return;
     if (m.progress) return p.onProgress && p.onProgress(m.progress);
     pending.delete(m.id);
+    if (m.session_expired) { human.until = 0; p.reject(new Error(SESSION_EXPIRED)); return; }
     if (m.ok) p.resolve(m.result);
     else p.reject(new Error(m.error || "Something went wrong. Reload the page."));
   };
@@ -40,8 +41,79 @@
   booting.then(() => { S.engine = true; }).catch((err) => engineFailed(err.message));
 
   function bootStep() { /* loading runs silently in the background */ }
+  booting.then(() => relaySession()).catch(() => { /* reported when the visitor acts */ });
   function engineFailed(message) {
     $("cred-err").textContent = message + " Try reloading, or a current Chrome, Edge, Firefox or Safari.";
+  }
+
+  // ---- relay session (Cloudflare Turnstile) ------------------------------------------------------
+  // The relay only serves browsers that pass Cloudflare Turnstile. The page swaps the Turnstile
+  // token for a one-hour relay session, which the engine sends with every request. Most visitors
+  // never see the check; when Cloudflare wants a click, the widget appears at the top. Without a
+  // site key (the local server) there is no check.
+  const TURNSTILE_JS = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+  const SESSION_EXPIRED = "The security check has expired. Press the button again.";
+  const human = { script: null, widget: null, wait: null, until: 0, pending: null };
+
+  function relaySession() {
+    if (!CONFIG.turnstile || human.until - Date.now() > 10 * 60e3) return Promise.resolve();
+    if (!human.pending) human.pending = newSession().finally(() => { human.pending = null; });
+    return human.pending;
+  }
+  async function newSession() {
+    const token = await humanToken();
+    let res;
+    try {
+      res = await fetch(`${CONFIG.relay}/session`, { method: "POST", body: token, cache: "no-store" });
+    } catch (_) {
+      throw new Error("The ValueLens relay could not be reached. Check your connection and try again.");
+    }
+    const body = await res.json().catch(() => ({}));
+    if (res.status === 404) { human.until = Date.now() + 15 * 60e3; return; } // relay without sessions
+    if (!res.ok || !body.session) throw new Error(body.error || `The security check failed (${res.status}). Reload the page.`);
+    await rpc("session", body.session);
+    human.until = Date.now() + body.expires_in * 1000;
+  }
+  function loadTurnstile() {
+    if (!human.script) {
+      human.script = new Promise((resolve, reject) => {
+        const s = document.createElement("script");
+        s.src = TURNSTILE_JS; s.async = true;
+        s.onload = () => (window.turnstile ? resolve(window.turnstile) : s.onerror());
+        s.onerror = () => {
+          human.script = null; s.remove();
+          reject(new Error("The security check (Cloudflare Turnstile) could not load. If a content blocker is on, allow challenges.cloudflare.com and try again."));
+        };
+        document.head.append(s);
+      });
+    }
+    return human.script;
+  }
+  async function humanToken() {
+    const ts = await loadTurnstile();
+    return new Promise((resolve, reject) => {
+      human.wait = { resolve, reject };
+      if (human.widget != null) return ts.reset(human.widget);
+      const fail = (msg) => () => { settle(null, new Error(msg)); return true; };
+      human.widget = ts.render("#human-box", {
+        sitekey: CONFIG.turnstile,
+        action: "turnstile-spin-v2", // Cloudflare's marker for Turnstile set up with its Spin guide
+        appearance: "interaction-only",
+        theme: "dark",
+        "refresh-expired": "manual",
+        callback: (token) => settle(token),
+        "error-callback": fail("The security check failed. Reload the page and try again."),
+        "timeout-callback": fail("The security check timed out. Press the button again."),
+        "unsupported-callback": fail("This browser cannot run the security check. Try a current Chrome, Edge, Firefox or Safari."),
+        "before-interactive-callback": () => { $("human").hidden = false; },
+        "after-interactive-callback": () => { $("human").hidden = true; },
+      }) ?? null;
+    });
+  }
+  function settle(token, err) {
+    const w = human.wait;
+    human.wait = null;
+    if (w) token ? w.resolve(token) : w.reject(err);
   }
 
   // ---- stages ------------------------------------------------------------------------------
@@ -96,6 +168,7 @@
     const stop = runningRow(list, "SEC EDGAR IDENTITY", "checking");
     try {
       await booting;
+      await relaySession();
       const sec = await rpc("identity", identity());
       stop(); list.replaceChildren(); checkRows(list, "SEC EDGAR IDENTITY", sec.steps);
       if (!sec.ok) { $("cred-err").textContent = sec.message; return; }
@@ -133,6 +206,7 @@
     const list = $("tk-checks"); list.replaceChildren(); $("found").hidden = false; $("tk-co").hidden = true;
     const stop = runningRow(list, t, "checking");
     try {
+      await relaySession();
       const v = await rpc("ticker", t);
       stop(); list.replaceChildren();
       if ($("tk").value.trim().toUpperCase() !== t) return;
@@ -201,6 +275,7 @@
     paintLog();
     const tick = setInterval(() => { frame = (frame + 1) % SPIN.length; paintLog(); }, 120);
     try {
+      await relaySession();
       const r = await rpc("analyze", t, onProgress);
       onProgress(null);
       $("log").append(txt("li", `done in ${((performance.now() - started) / 1000).toFixed(1)}s`, "summary"));
