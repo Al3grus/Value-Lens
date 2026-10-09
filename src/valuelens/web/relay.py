@@ -85,18 +85,14 @@ class Relay:
         url = route["upstream"] + rest
         if route.get("yahoo_crumb"):
             return self._yahoo(url, params, out_headers)
-        return self._forward(method, url, params, out_headers, route.get("retry_denied", 0))
+        return self._forward(method, url, params, out_headers)
 
-    def _forward(self, method: str, url: str, params, headers, retries: int = 0) -> RelayResponse:
+    def _forward(self, method: str, url: str, params, headers) -> RelayResponse:
         import httpx2
 
         target = f"{url}?{urlencode(params)}" if params else url
         try:
             resp = self.client.request(method, target, headers=headers)
-            for _ in range(retries):  # relay_routes.json "retry_denied"
-                if resp.status_code != 403:
-                    break
-                resp = self.client.request(method, target, headers=headers)
         except httpx2.HTTPError as exc:
             return _error(502, f"Upstream unreachable: {type(exc).__name__}")
         ctype = resp.headers.get("content-type", "application/octet-stream")

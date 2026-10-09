@@ -216,8 +216,20 @@ def test_identity_accepted_after_three_checks():
     assert res.ok, res.message
     assert [s.label for s in res.steps] == ["format", "e-mail domain", "SEC EDGAR"]
     assert res.data["identity"] == IDENT
-    head = [c for c in t.calls if c[1].startswith(TICKERS_URL)]
-    assert head and head[0][0] == "HEAD" and head[0][2]["User-Agent"] == IDENT
+    sec = [c for c in t.calls if c[1].startswith(TICKERS_URL)]
+    # GET, not HEAD: the SEC's CDN intermittently refuses HEAD requests from Cloudflare's network.
+    assert sec and sec[0][0] == "GET" and sec[0][2]["User-Agent"] == IDENT
+
+
+def test_identity_check_keeps_the_ticker_list_for_the_ticker_check(tmp_path):
+    from valuelens.data.cache import FileCache
+    from valuelens.data.sec import SecClient
+
+    t, cache = world(), FileCache(tmp_path)
+    assert check_identity(IDENT, t, cache).ok
+    before = len(t.urls(TICKERS_URL))
+    assert SecClient(IDENT, cache, {}, t).lookup_cik("TEST")[0] == CIK
+    assert len(t.urls(TICKERS_URL)) == before  # no second download
 
 
 def test_identity_typo_domain_rejected_without_requests():
@@ -602,25 +614,6 @@ def test_relay_only_forwards_allowlisted_paths_and_params(relay):
     )
     assert res.status == 200
     assert str(up.seen[-1].url) == "https://fred.stlouisfed.org/graph/fredgraph.csv?id=AAA"
-
-
-def test_relay_retries_refused_sec_identity_check():
-    import httpx2
-
-    from valuelens.web.relay import Relay
-
-    calls = []
-
-    def handler(request):
-        calls.append(request.url.path)
-        refused = calls.count(request.url.path) <= 2 or "CIK" in request.url.path
-        return httpx2.Response(403 if refused else 200)
-
-    r = Relay(httpx2.Client(transport=httpx2.MockTransport(handler)))
-    head = r.handle("HEAD", "sec/www/files/company_tickers.json", [], {"X-SEC-Identity": IDENT})
-    assert head.status == 200 and calls.count("/files/company_tickers.json") == 3  # two retries
-    data = r.handle("GET", "sec/data/submissions/CIK0000320193.json", [], {"X-SEC-Identity": IDENT})
-    assert data.status == 403 and calls.count("/submissions/CIK0000320193.json") == 1  # not retried
 
 
 def test_relay_yahoo_summary_gets_crumb(relay):

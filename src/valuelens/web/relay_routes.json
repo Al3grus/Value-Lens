@@ -1,5 +1,5 @@
 {
-  "_comment": "Single source of truth for the relay. Read by the Cloudflare Worker (relay/src/index.js) and the local Python relay (valuelens/web/relay.py). Only these paths and query parameters are forwarded. retry_denied: how many times to repeat a request the upstream refused with 403 (the SEC's CDN intermittently refuses HEAD requests from Cloudflare's network; an immediate retry gets through).",
+  "_comment": "Single source of truth for the relay. Read by the Cloudflare Worker (relay/src/index.js) and the local Python relay (valuelens/web/relay.py). Only these paths and query parameters are forwarded. The SEC ticker list doubles as the identity check, so it is never served from the edge cache.",
   "identity_pattern": "^\\S.{0,120}\\s[A-Za-z0-9._%+\\-]+@[A-Za-z0-9.\\-]+\\.[A-Za-z]{2,}$",
   "routes": {
     "sec/www/": {
@@ -7,9 +7,7 @@
       "paths": ["^files/company_tickers\\.json$"],
       "params": [],
       "methods": ["GET", "HEAD"],
-      "identity": true,
-      "retry_denied": 2,
-      "edge_cache_s": 21600
+      "identity": true
     },
     "sec/data/": {
       "upstream": "https://data.sec.gov/",

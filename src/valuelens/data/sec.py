@@ -8,6 +8,7 @@ Endpoints (no API key; SEC asks for a descriptive User-Agent and <= 10 requests/
 
 from __future__ import annotations
 
+import contextlib
 import re
 from collections import Counter
 from dataclasses import dataclass, field
@@ -63,6 +64,11 @@ def identity_problem(user_agent: str) -> str | None:
     return None
 
 
+def _ticker_map(raw: dict[str, Any]) -> dict[str, list[Any]]:
+    """SEC company_tickers.json -> {TICKER: [cik, company name]}."""
+    return {v["ticker"].upper(): [int(v["cik_str"]), v["title"]] for v in raw.values()}
+
+
 class SecClient:
     def __init__(
         self,
@@ -103,8 +109,14 @@ class SecClient:
         return resp
 
     def verify(self) -> int:
-        """One uncached HEAD request with this identity; returns the HTTP status (200 = accepted)."""
-        return self._request("HEAD", TICKERS_URL).status
+        """One uncached request with this identity; returns the HTTP status (200 = accepted).
+        It downloads the ticker list (a GET: the SEC's CDN intermittently refuses HEAD requests
+        from cloud networks such as Cloudflare's) and keeps it for the ticker check."""
+        resp = self._request("GET", TICKERS_URL)
+        if resp.ok:  # an unreadable list is skipped: the ticker check downloads it again
+            with contextlib.suppress(ValueError, KeyError, TypeError, AttributeError):
+                self._cache.set("sec-map", TICKERS_URL, _ticker_map(resp.json()))
+        return resp.status
 
     def _get_json(self, url: str) -> Any:
         resp = self._request("GET", url)
@@ -129,10 +141,7 @@ class SecClient:
         return data
 
     def lookup_cik(self, ticker: str) -> tuple[int, str] | None:
-        def to_map(raw: dict[str, Any]) -> dict[str, list[Any]]:
-            return {v["ticker"].upper(): [int(v["cik_str"]), v["title"]] for v in raw.values()}
-
-        mapping = self._cached("sec-map", TICKERS_URL, self._ttl_map, to_map) or {}
+        mapping = self._cached("sec-map", TICKERS_URL, self._ttl_map, _ticker_map) or {}
         key = ticker.upper().replace(".", "-")
         hit = mapping.get(key) or mapping.get(key.replace("-", "."))
         return (hit[0], hit[1]) if hit else None
