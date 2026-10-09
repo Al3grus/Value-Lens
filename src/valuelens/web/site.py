@@ -2,9 +2,9 @@
 
     python -m valuelens.web.site --relay https://valuelens-relay.<you>.workers.dev --out _site
 
-The output folder holds index.html, app.js, engine.mjs, style.css, config.js and
+The output folder holds index.html, app.js, engine.mjs, style.css, config.js, version.json and
 py/valuelens-<hash>.zip (this package plus its pure-Python dependency ``rich``; numpy and pandas
-come from Pyodide's own distribution).
+come from Pyodide's own distribution). The page loads its files as ``name?v=<site version>``.
 """
 
 from __future__ import annotations
@@ -50,8 +50,10 @@ def python_bundle() -> bytes:
     return buf.getvalue()
 
 
-def config_js(relay: str, bundle: str, pyodide: str = PYODIDE_CDN) -> str:
+def config_js(relay: str, bundle: str, pyodide: str = PYODIDE_CDN, version: str = "") -> str:
     cfg = {"relay": relay.rstrip("/"), "pyodide": pyodide, "bundle": bundle}
+    if version:
+        cfg |= {"version": version, "engine": f"engine.mjs?v={version}"}
     return f"window.VALUELENS_CONFIG = {json.dumps(cfg, indent=2)};\n"
 
 
@@ -78,8 +80,23 @@ def csp(relay: str, pyodide: str = PYODIDE_CDN) -> str:
     )
 
 
-def index_html(relay: str, pyodide: str = PYODIDE_CDN) -> bytes:
-    return static_file("index.html").replace(b"__CSP__", csp(relay, pyodide).encode())
+def index_html(relay: str, pyodide: str = PYODIDE_CDN, version: str = "") -> bytes:
+    """The page with its CSP filled in. With ``version``, every file it loads is named
+    ``file?v=<version>`` so a cached copy of an older file can never be mixed with this page."""
+    page = static_file("index.html").replace(b"__CSP__", csp(relay, pyodide).encode())
+    if version:
+        for ref in (b'href="style.css"', b'src="config.js"', b'src="app.js"'):
+            page = page.replace(ref, ref[:-1] + f'?v={version}"'.encode())
+    return page
+
+
+def site_version(relay: str, pyodide: str, bundle: bytes) -> str:
+    """Short hash of everything the site serves: changes whenever any of it changes."""
+    h = hashlib.sha256(f"{relay}\n{pyodide}\n".encode())
+    for name in STATIC_FILES:
+        h.update(static_file(name))
+    h.update(bundle)
+    return h.hexdigest()[:12]
 
 
 def build_site(out: Path, relay: str, pyodide: str = PYODIDE_CDN) -> Path:
@@ -88,12 +105,17 @@ def build_site(out: Path, relay: str, pyodide: str = PYODIDE_CDN) -> Path:
     if out.exists():
         shutil.rmtree(out)
     (out / "py").mkdir(parents=True)
-    for name in STATIC_FILES:
-        (out / name).write_bytes(index_html(relay, pyodide) if name == "index.html" else static_file(name))
+    relay = relay.rstrip("/")
     data = python_bundle()
+    version = site_version(relay, pyodide, data)
+    for name in STATIC_FILES:
+        body = index_html(relay, pyodide, version) if name == "index.html" else static_file(name)
+        (out / name).write_bytes(body)
     bundle = f"py/valuelens-{hashlib.sha256(data).hexdigest()[:12]}.zip"
     (out / bundle).write_bytes(data)
-    (out / "config.js").write_text(config_js(relay, bundle, pyodide), encoding="utf-8")
+    (out / "config.js").write_text(config_js(relay, bundle, pyodide, version), encoding="utf-8")
+    # Fetched uncached by the page: tells a page restored from the browser's cache that it is old.
+    (out / "version.json").write_text(json.dumps({"version": version}) + "\n", encoding="utf-8")
     return out
 
 

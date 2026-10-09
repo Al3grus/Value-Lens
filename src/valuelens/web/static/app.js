@@ -15,7 +15,7 @@
   try { if (localStorage.getItem("valuelens.view") === "detailed") S.view = "detailed"; } catch (_) {}
 
   // ---- engine worker ---------------------------------------------------------------------
-  const worker = new Worker("engine.mjs", { type: "module" });
+  const worker = new Worker(CONFIG.engine || "engine.mjs", { type: "module" });
   const pending = new Map();
   let seq = 0;
   worker.onmessage = (e) => {
@@ -245,7 +245,36 @@
     document.querySelector(".stages").hidden = true; $("st-creds").hidden = true;
     $("closed").hidden = false; window.scrollTo(0, 0);
   });
-  $("restart").addEventListener("click", () => location.reload());
+  $("restart").addEventListener("click", () => {
+    latestVersion().then((v) => {
+      if (freshPage(v)) return;
+      document.querySelector(".stages").hidden = false;
+      $("cred-checks").replaceChildren(); $("cred-result").hidden = true; $("cred-err").textContent = "";
+      $("cred-go").textContent = "VERIFY"; $("cred-cancel").hidden = true; $("exit").disabled = false;
+      $("tk").value = ""; resetCheck(); $("tk-err").textContent = "";
+      $("log").replaceChildren(); $("result").hidden = true; $("failure").hidden = true; $("end").hidden = true;
+      stage(1); window.scrollTo(0, 0);
+    });
+  });
+
+  // ---- stay current: a tab restored from the browser's cache can hold an older version ---------
+  // version.json is fetched uncached; if the site has changed, load the new page (once per version).
+  function latestVersion() {
+    if (!CONFIG.version) return Promise.resolve(null); // local server: nothing is cached
+    return fetch("version.json", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => (j && j.version) || null, () => null);
+  }
+  function freshPage(v) {
+    if (!v || v === CONFIG.version) return false;
+    try {
+      if (sessionStorage.getItem("valuelens.loaded") === v) return false; // tried already: no loop
+      sessionStorage.setItem("valuelens.loaded", v);
+    } catch (_) { return false; }
+    location.replace(`${location.pathname}?v=${encodeURIComponent(v)}`);
+    return true;
+  }
+  latestVersion().then(freshPage);
 
   // ---- tooltips: Escape closes ----------------------------------------------------------------------
   document.addEventListener("keydown", (e) => {

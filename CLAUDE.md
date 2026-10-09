@@ -48,7 +48,9 @@ site locally with a Python relay).
   `render.py` (report as HTML; borders, bars and gauge are CSS `.rp` rules in style.css, never
   box-drawing characters; every text node html-escaped), `session.py` (one visitor, identity in memory only), `browser.py` (Pyodide entry points),
   `relay.py` + `relay_routes.json` (the one allow-list, also imported by `relay/src/index.js`;
-  keep `browser.ROUTES` in sync), `site.py` (static build + Python zip, Pyodide version pin), `server.py` (local).
+  keep `browser.ROUTES` in sync), `site.py` (static build + Python zip, Pyodide version pin; the
+  page loads its files as `name?v=<site version>` and checks `version.json` uncached, so a tab
+  restored from cache updates itself), `server.py` (local, `no-store`, no version).
 - `relay/` — Cloudflare Worker (wrangler.jsonc), node:test tests. CORS only for ALLOWED_ORIGINS.
 - Browser target is Pyodide (Python 3.14, pandas 3.0.x, numpy 2.4.x); CI tests 3.14.
 - HTTP client is `httpx2` (maintained successor of httpx, also what Starlette's TestClient uses).

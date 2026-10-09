@@ -662,10 +662,29 @@ def test_build_site(tmp_path):
     assert "__CSP__" not in page
     assert "connect-src 'self' https://cdn.jsdelivr.net https://relay.example.workers.dev" in page
     assert "'wasm-unsafe-eval' https://cdn.jsdelivr.net" in page
-    bundle = json.loads(cfg.split("=", 1)[1].rstrip(";\n"))["bundle"]
-    assert (out / bundle).is_file()
+    conf = json.loads(cfg.split("=", 1)[1].rstrip(";\n"))
+    assert (out / conf["bundle"]).is_file()
     with pytest.raises(SystemExit):
         build_site(tmp_path / "x", "http://insecure.example")
+
+
+def test_site_files_carry_the_site_version(tmp_path):
+    """A browser that has an old page cached must never mix it with new code (or the reverse):
+    every file the page loads is named with the site version, and version.json tells an old
+    page that a newer site exists."""
+    from valuelens.web.site import build_site
+
+    out = build_site(tmp_path / "a", "https://relay.example.workers.dev")
+    version = json.loads((out / "version.json").read_text())["version"]
+    page = (out / "index.html").read_text()
+    for ref in ("style.css", "config.js", "app.js"):
+        assert f"{ref}?v={version}" in page
+    conf = json.loads((out / "config.js").read_text().split("=", 1)[1].rstrip(";\n"))
+    assert conf["version"] == version and conf["engine"] == f"engine.mjs?v={version}"
+    again = build_site(tmp_path / "b", "https://relay.example.workers.dev")
+    assert json.loads((again / "version.json").read_text())["version"] == version  # deterministic
+    other = build_site(tmp_path / "c", "https://other-relay.example.workers.dev")
+    assert json.loads((other / "version.json").read_text())["version"] != version
 
 
 def test_local_server_serves_site_and_relay():
