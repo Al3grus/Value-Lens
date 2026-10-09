@@ -1,7 +1,9 @@
 """Simple and detailed views, plain-English summary, CLI and loading animation."""
 
+import html
 import io
 import json
+import re
 
 import pytest
 from conftest import build_bundle
@@ -186,3 +188,52 @@ def test_box_lines_have_equal_width(cheap, view):
     for line in render(cheap, view, width=120).splitlines():
         if line.startswith(("│", "┌", "└")):
             assert len(line) == len(line.rstrip()) and line.rstrip()[-1] in "│┐┘", repr(line)
+
+
+# ---- website report: HTML + CSS, same content as the terminal views ----------------------
+@pytest.mark.parametrize("view", ["simple", "detailed"])
+def test_html_report_draws_with_css_not_characters(cheap, view):
+    from valuelens.web.render import CELLS, report_html
+
+    out = report_html(cheap, view)
+    assert not set(out) & (BOX_CHARS | set("═█░♦●"))  # borders, bars and gauge are CSS
+    meters = re.findall(r'<span class="rp-meter[^"]*"[^>]*>(.*?)</span>', out)
+    assert meters and all(m.count("<i") == CELLS for m in meters)
+
+
+def test_html_report_says_what_the_terminal_says(cheap, pricey):
+    from valuelens.web.render import report_html
+
+    for r in (cheap, pricey):
+        simple, detailed = report_html(r, "simple"), report_html(r, "detailed")
+        s = summarize(r)
+        for line in (s.headline, s.value, *s.strengths, *s.concerns):
+            assert html.escape(line) in simple
+        for part in ("What is it worth?", "Scorecard", "Timing", "not investment advice"):
+            assert part in simple
+        for title in ("VERDICT", "INTRINSIC VALUE", "GRAHAM: DEFENSIVE INVESTOR", "BUFFETT: BUSINESS QUALITY",
+                      "FINANCIAL HEALTH &amp; FORENSICS", "RESEARCH-BACKED FACTORS", "NOTES"):  # fmt: skip
+            assert title in detailed
+        for c in r.graham.criteria:
+            assert html.escape(MEANING.get(c.key, "")) in detailed
+
+
+def test_html_report_escapes_company_text(cheap):
+    from valuelens.web.render import report_html
+
+    cheap.name = '<img src=x onerror=alert(1)> & "Co"'
+    for view in ("simple", "detailed"):
+        out = report_html(cheap, view)
+        assert "<img" not in out and "&lt;img src=x onerror=alert(1)&gt; &amp; &quot;Co&quot;" in out
+
+
+def test_html_gauge_stays_on_its_track(cheap, pricey):
+    from valuelens.web.render import report_html
+
+    for r in (cheap, pricey):
+        out = report_html(r, "simple")
+        positions = [float(x) for x in re.findall(r"(?:left|width):(-?[\d.]+)%", out)]
+        assert positions and all(0 <= p <= 100 for p in positions)
+    cheap.valuation.fair_value = None
+    out = report_html(cheap, "simple")
+    assert "rp-gauge" not in out and "What is it worth?" in out

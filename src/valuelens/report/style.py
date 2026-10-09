@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from rich import box
 from rich.table import Table
@@ -11,11 +12,15 @@ from rich.text import Text
 from ..analysis.metrics import finite
 from ..models import Signal, Status
 
+if TYPE_CHECKING:
+    from .content import Scale
+
 ACCENT = "cyan"
 MUTED = "grey58"
 GOOD = "green"
 BAD = "red"
 WARN = "yellow"
+TONE = {"good": GOOD, "bad": BAD, "warn": WARN, "muted": MUTED, "": ""}  # report.content tones
 
 SIGNAL_STYLE = {
     Signal.STRONG_BUY: "bold white on dark_green",
@@ -86,14 +91,19 @@ def badge(signal: Signal | None) -> Text:
     return Text(f" {signal.value} ", style=SIGNAL_STYLE[signal])
 
 
-def score_color(score: float | None) -> str:
+def score_tone(score: float | None) -> str:
+    """Level of a 0-100 score: "good", "warn", "bad", or "muted" when there is none."""
     if score is None:
-        return MUTED
+        return "muted"
     if score >= 70:
-        return GOOD
+        return "good"
     if score >= 45:
-        return WARN
-    return BAD
+        return "warn"
+    return "bad"
+
+
+def score_color(score: float | None) -> str:
+    return TONE[score_tone(score)]
 
 
 def bar(score: float | None, sym: Symbols, width: int = 24) -> Text:
@@ -123,41 +133,29 @@ def money(x: float | None, currency: str, digits: int = 2) -> str:
     return f"{sym}{x:,.{digits}f}"
 
 
-def gauge(
-    low: float | None,
-    high: float | None,
-    fair: float | None,
-    price: float,
-    currency: str,
-    sym: Symbols,
-    width: int = 48,
-) -> list[Text] | None:
+def gauge(sc: Scale | None, currency: str, sym: Symbols, width: int = 48) -> list[Text] | None:
     """Two lines: a scale with the fair-value range, fair value and price, then a legend."""
-    if not fair:
+    if sc is None:
         return None
-    lo = min(v for v in (low, fair) if finite(v))
-    hi = max(v for v in (high, fair) if finite(v))
-    left, right = min(lo, price) * 0.92, max(hi, price) * 1.05
-    span = right - left or 1.0
 
     def pos(v: float) -> int:
-        return max(0, min(width - 1, round((v - left) / span * (width - 1))))
+        return round(sc.at(v) * (width - 1))
 
     cells = [Text(sym.line, style="grey35") for _ in range(width)]
-    for i in range(pos(lo), pos(hi) + 1):
+    for i in range(pos(sc.low), pos(sc.high) + 1):
         cells[i] = Text(sym.range, style=ACCENT)
-    cells[pos(fair)] = Text(sym.fair, style=f"bold {ACCENT}")
-    price_style = f"bold {GOOD}" if price <= fair else f"bold {BAD}"
-    cells[pos(price)] = Text(sym.price, style=price_style)
-    scale = Text()
+    cells[pos(sc.fair)] = Text(sym.fair, style=f"bold {ACCENT}")
+    price_style = f"bold {GOOD}" if sc.price <= sc.fair else f"bold {BAD}"
+    cells[pos(sc.price)] = Text(sym.price, style=price_style)
+    line = Text()
     for c in cells:
-        scale.append_text(c)
-    scale = Text.assemble(Text(f"{money(left, currency, 0):>9} ", style=MUTED), scale,
-                          Text(f" {money(right, currency, 0)}", style=MUTED))  # fmt: skip
+        line.append_text(c)
+    line = Text.assemble(Text(f"{money(sc.left, currency, 0):>9} ", style=MUTED), line,
+                         Text(f" {money(sc.right, currency, 0)}", style=MUTED))  # fmt: skip
     legend = Text.assemble(
         " " * 10,
-        (sym.range * 2, ACCENT), (f" value range {money(lo, currency, 0)} to {money(hi, currency, 0)}   ", MUTED),
-        (sym.fair, f"bold {ACCENT}"), (f" fair value {money(fair, currency, 0)}   ", MUTED),
-        (sym.price, price_style), (f" price {money(price, currency, 0)}", MUTED),
+        (sym.range * 2, ACCENT), (f" value range {money(sc.low, currency, 0)} to {money(sc.high, currency, 0)}   ", MUTED),
+        (sym.fair, f"bold {ACCENT}"), (f" fair value {money(sc.fair, currency, 0)}   ", MUTED),
+        (sym.price, price_style), (f" price {money(sc.price, currency, 0)}", MUTED),
     )  # fmt: skip
-    return [scale, legend]
+    return [line, legend]

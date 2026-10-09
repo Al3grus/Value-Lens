@@ -1,18 +1,17 @@
-// ValueLens page logic. Three stages: credentials -> ticker -> report. All analysis runs in the
-// engine worker (engine.mjs); this file only drives the screen. Credentials live in the worker's
-// memory for this tab and are never written to storage.
+// ValueLens page logic. Three stages: your details (name + e-mail for the SEC) -> ticker -> report.
+// All analysis runs in the engine worker (engine.mjs); this file only drives the screen. The name
+// and e-mail live in the worker's memory for this tab and are never written to storage.
 (() => {
   "use strict";
   const CONFIG = window.VALUELENS_CONFIG || {};
   const TICKER_RE = /^[A-Z0-9][A-Z0-9.\-=^]{0,15}$/;
   const EMAIL_RE = /^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$/;
-  const FRED_RE = /^[a-z0-9]{32}$/;
   const SPIN = ["|", "/", "-", "\\"];
   const STEPS = { market: "Market data (Yahoo Finance)", filings: "SEC filings (10-K, 10-Q)", rates: "Interest rates (FRED)", analysis: "Scoring and valuation" };
   const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
   const $ = (id) => document.getElementById(id);
   const txt = (tag, text, cls) => { const n = document.createElement(tag); n.textContent = text; if (cls) n.className = cls; return n; };
-  const S = { verified: false, usage: null, fredMode: "public", checked: null, view: "simple", result: null, busy: false, engine: false };
+  const S = { verified: false, checked: null, view: "simple", result: null, busy: false, engine: false };
   try { if (localStorage.getItem("valuelens.view") === "detailed") S.view = "detailed"; } catch (_) {}
 
   // ---- engine worker ---------------------------------------------------------------------
@@ -26,8 +25,7 @@
     if (!p) return;
     if (m.progress) return p.onProgress && p.onProgress(m.progress);
     pending.delete(m.id);
-    if (m.usage) setUsage(m.usage);
-    if (m.ok) { if (m.result && m.result.usage) setUsage(m.result.usage); p.resolve(m.result); }
+    if (m.ok) p.resolve(m.result);
     else p.reject(new Error(m.error || "Something went wrong. Reload the page."));
   };
   worker.onerror = (e) => engineFailed(e.message || "ValueLens could not start in this browser.");
@@ -55,7 +53,6 @@
     $("closed").hidden = true;
     const focus = { 1: "name", 2: "tk" }[n];
     if (focus) setTimeout(() => $(focus).focus(), 0);
-    paintUsage();
   }
 
   // ---- checks list -----------------------------------------------------------------------
@@ -80,57 +77,37 @@
     return () => clearInterval(t);
   }
 
-  // ---- usage: FRED requests left this minute, shown in the top bar -----------------------------
-  function setUsage(u) { S.usage = u; if (u.mode) S.fredMode = u.mode.fred; paintUsage(); }
-  function paintUsage() {
-    const fred = S.usage && S.usage.fred;
-    const show = Boolean(fred && S.verified && S.fredMode === "key");
-    $("st-budget").hidden = !show;
-    if (show) {
-      $("st-budget").textContent = `FRED ${fred.remaining}/${fred.limit} left this min`;
-      $("st-budget").className = fred.remaining < fred.limit * 0.15 ? "bad" : "";
-    }
-  }
-
-  // ---- stage 1: credentials ------------------------------------------------------------------
+  // ---- stage 1: your details (name + e-mail for the SEC) ---------------------------------------
   function identity() { return `${$("name").value.trim().replace(/\s+/g, " ")} ${$("email").value.trim()}`; }
   function unverify() {
     if (!S.verified && $("cred-go").textContent === "VERIFY") return;
     S.verified = false; $("cred-go").textContent = "VERIFY"; $("cred-result").hidden = true;
   }
-  for (const id of ["name", "email", "fred"]) $(id).addEventListener("input", () => { unverify(); $("cred-err").textContent = ""; });
+  for (const id of ["name", "email"]) $(id).addEventListener("input", () => { unverify(); $("cred-err").textContent = ""; });
 
   $("cred-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     if (S.verified) { showCreds(); stage(2); return; }
-    const name = $("name").value.trim(), email = $("email").value.trim(), fred = $("fred").value.trim().toLowerCase();
+    const name = $("name").value.trim(), email = $("email").value.trim();
     if (name.length < 2) { $("cred-err").textContent = "Enter your full name."; $("name").focus(); return; }
     if (!EMAIL_RE.test(email)) { $("cred-err").textContent = "Enter a valid e-mail address, e.g. name@domain.com."; $("email").focus(); return; }
-    if (fred && !FRED_RE.test(fred)) { $("cred-err").textContent = "A FRED key is 32 lower-case letters and digits. Leave it empty to skip."; $("fred").focus(); return; }
     $("cred-go").disabled = true; $("cred-err").textContent = "";
     const list = $("cred-checks"); list.replaceChildren(); $("cred-result").hidden = false;
-    let stop = runningRow(list, "SEC EDGAR IDENTITY", "checking");
+    const stop = runningRow(list, "SEC EDGAR IDENTITY", "checking");
     try {
       await booting;
       const sec = await rpc("identity", identity());
       stop(); list.replaceChildren(); checkRows(list, "SEC EDGAR IDENTITY", sec.steps);
       if (!sec.ok) { $("cred-err").textContent = sec.message; return; }
-      const head = fred ? "FRED API KEY" : "FRED (no key)";
-      const keep = [...list.children];
-      stop = runningRow(list, head, "checking");
-      const fr = await rpc("fred", fred);
-      stop(); list.replaceChildren(...keep); checkRows(list, head, fr.steps);
-      if (!fr.ok) { $("cred-err").textContent = fr.message; return; }
       S.verified = true;
       $("cred-go").textContent = "CONTINUE";
       $("cred-go").focus();
     } catch (err) {
       stop(); $("cred-err").textContent = err.message;
-    } finally { $("cred-go").disabled = false; paintUsage(); }
+    } finally { $("cred-go").disabled = false; }
   });
   function showCreds() {
     $("st-creds").hidden = false;
-    $("st-fred").replaceChildren(S.fredMode === "key" ? txt("span", "√ key", "ok") : txt("span", "– public", "dim"));
     $("cred-cancel").hidden = false;
   }
   const change = txt("button", "change", "linkbtn"); change.type = "button";
@@ -236,7 +213,7 @@
     } finally {
       clearInterval(tick);
       S.busy = false; $("run").disabled = false;
-      $("end").hidden = false; paintUsage();
+      $("end").hidden = false;
       $("again").focus({ preventScroll: true });
     }
   });
@@ -245,7 +222,7 @@
     if (!S.result) return;
     $("tab-simple").setAttribute("aria-selected", String(S.view === "simple"));
     $("tab-detailed").setAttribute("aria-selected", String(S.view === "detailed"));
-    $("pre").innerHTML = S.result[S.view]; // rich's HTML export: all text is escaped by rich
+    $("readout").innerHTML = S.result[S.view]; // web/render.py: every text node is html-escaped there
   }
   for (const [id, view] of [["tab-simple", "simple"], ["tab-detailed", "detailed"]]) {
     $(id).addEventListener("click", () => {
@@ -262,10 +239,10 @@
   $("exit").addEventListener("click", async () => {
     $("exit").disabled = true;
     try { await rpc("forget"); } catch (_) { /* nothing to clear */ }
-    for (const id of ["name", "email", "fred"]) $(id).value = "";
-    S.verified = false; S.result = null; $("pre").replaceChildren();
+    for (const id of ["name", "email"]) $(id).value = "";
+    S.verified = false; S.result = null; $("readout").replaceChildren();
     for (const i of [1, 2, 3]) $("stage" + i).hidden = true;
-    document.querySelector(".stages").hidden = true; $("st-creds").hidden = true; $("st-budget").hidden = true;
+    document.querySelector(".stages").hidden = true; $("st-creds").hidden = true;
     $("closed").hidden = false; window.scrollTo(0, 0);
   });
   $("restart").addEventListener("click", () => location.reload());

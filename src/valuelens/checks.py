@@ -1,4 +1,4 @@
-"""Checks that run before anything expensive: the SEC identity, the FRED key and the ticker.
+"""Checks that run before anything expensive: the SEC identity and the ticker.
 
 Each check makes at most one or two small requests, so a typo is caught before an analysis spends
 SEC, FRED and Yahoo requests. Used by the website (through the relay) and testable offline with a
@@ -12,7 +12,6 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .data import fred
 from .data.cache import FileCache
 from .data.http import Transport, TransportError
 from .data.sec import TICKERS_URL, SecClient, SecError, ascii_identity, identity_problem
@@ -140,23 +139,6 @@ def check_identity(identity: str, transport: Transport, cache: FileCache | None 
         return CheckResult(False, msg, steps)
     steps.append(Step("SEC EDGAR", True, "SEC accepted this identity"))
     return CheckResult(True, "Identity accepted.", steps, {"identity": identity})
-
-
-# --------------------------------------------------------------------------------------
-# FRED key
-# --------------------------------------------------------------------------------------
-def check_fred_key(key: str, transport: Transport) -> CheckResult:
-    key = (key or "").strip().lower()
-    problem = fred.key_problem(key)
-    if problem:
-        return CheckResult(False, problem, [Step("format", False, problem)])
-    steps = [Step("format", True, "32 letters and digits")]
-    res = fred.check_key(key, transport)
-    detail = res.message
-    if res.observation:
-        detail = f"live: AAA corporate yield {res.observation[0]:.2f}% ({res.observation[1]})"
-    steps.append(Step("FRED API", res.ok, detail))
-    return CheckResult(res.ok, res.message, steps, {"key": key} if res.ok else {})
 
 
 # --------------------------------------------------------------------------------------

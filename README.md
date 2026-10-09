@@ -60,7 +60,8 @@ rates (without one, FRED's public CSV is used):
 api_key = "your 32-character key"
 ```
 
-or set `VALUELENS_FRED_API_KEY`. (The website asks for both in each browser session instead.)
+or set `VALUELENS_FRED_API_KEY`. (The website asks only for your name and e-mail, in each browser
+session, and always uses FRED's public download.)
 
 ## Usage
 
@@ -89,26 +90,30 @@ interest rates, analysis) that disappears once the report is ready. Colours foll
 
 ## Website
 
-The same analysis as a web page anyone can use with their own free credentials. It is hosted
-for free on GitHub Pages and runs entirely in the visitor's browser (Python compiled to
-WebAssembly with [Pyodide](https://pyodide.org)). Three stages:
+The same analysis as a web page anyone can use with just a name and e-mail: no account, no
+key. It is hosted for free on GitHub Pages and runs entirely in the visitor's browser (Python
+compiled to WebAssembly with [Pyodide](https://pyodide.org)). Three stages:
 
-1. **Credentials.** Name and e-mail for SEC EDGAR (required) and a FRED API key (optional).
-   Each is checked before anything else runs: the e-mail's domain must exist and accept mail
-   (common typos such as `gmial.com` are caught), the SEC must accept the identity, and the FRED
-   key must work in a live request. A request budget shows each service's published limit, what
-   you have used and what is left. Credentials stay in the browser tab and are never stored.
+1. **Your details.** Name and e-mail, which the SEC asks every automated tool to send. They are
+   checked before anything else runs: the e-mail's domain must exist and accept mail (common
+   typos such as `gmial.com` are caught) and the SEC must accept the identity. They stay in the
+   browser tab and are never stored.
 2. **Ticker.** One small price request plus the SEC ticker list confirm the company exists, is
    a company share (not an ETF or fund) and files with the SEC. *RUN ANALYSIS* only appears after
    a successful check, so a typo never spends requests.
 3. **Report.** Live step log, then the simple and detailed reports, then *NEW TICKER* or *EXIT*
-   (which clears the credentials).
+   (which clears the name and e-mail). The reports are HTML and CSS
+   ([`web/render.py`](src/valuelens/web/render.py)) with the same content and wording as the
+   terminal views, so they line up in any browser and font.
 
 | Service | Published limit | One analysis uses |
 |---|---|---|
 | SEC EDGAR | 10 requests per second, no daily cap | about 3 (cached 24 h in the browser) |
-| FRED API | 120 requests per minute per key | 2 (cached 24 h) |
+| FRED public download | none published | 2 (cached 24 h) |
 | Yahoo Finance | none published; bursts are throttled | about 2 |
+
+Interest rates come from FRED's public download, which gives the same figures as its key-based
+API, so visitors never need a FRED account. (The command-line version can still use a key.)
 
 ### Why there is a relay
 
@@ -117,8 +122,7 @@ so explicitly), and browsers cannot set the User-Agent header the SEC requires. 
 [Cloudflare Worker](relay/src/index.js) forwards the page's requests. It only forwards the paths
 and parameters listed in [`relay_routes.json`](src/valuelens/web/relay_routes.json), only for
 your site's address, limits each visitor to 120 requests per minute and stores nothing. The
-FRED key travels in a request header, never in a URL. The free Workers plan allows 100,000
-requests per day. If you give the Worker a custom domain, public SEC filings are also cached at
+free Workers plan allows 100,000 requests per day. If you give the Worker a custom domain, public SEC filings are also cached at
 Cloudflare's edge for 6 hours (Cloudflare's cache does not apply on `workers.dev` addresses).
 
 The Origin check stops other websites, not scripts: anyone could call the relay directly within
@@ -237,7 +241,7 @@ and can be overridden from `valuelens.toml`.
 |---|---|---|
 | 10+ years of annual statements, latest 10-Q for TTM | SEC EDGAR XBRL `companyfacts` | No — User-Agent only |
 | Price, history, splits, dividends, profile, sentiment | Yahoo Finance via `yfinance` | No |
-| AAA corporate yield, 10y Treasury | FRED official API with your key, else FRED public CSV | Optional (free) |
+| AAA corporate yield, 10y Treasury | FRED official API with your key, else FRED public CSV (the website always uses the CSV) | Optional (free), command line only |
 | Statements for non-SEC filers (e.g. most European listings) | Yahoo Finance (≈4–5 years) | No |
 
 SEC data is parsed with care for the things that commonly go wrong: concept changes over the
@@ -270,10 +274,12 @@ src/valuelens/
                fred.py, normalize.py (canonical columns), bundle.py (assembles everything)
   analysis/    graham.py, buffett.py, valuation.py, health.py, factors.py, technicals.py,
                sentiment.py, decision.py, signals.py, metrics.py
-  report/      text.py (console report), json_out.py (API output)
-  checks.py    credential and ticker checks run before an analysis
-  web/         website: static/ (page, worker), session.py, browser.py (Pyodide glue),
-               relay.py (local relay), site.py (static build), server.py (local server)
+  report/      content.py (what the reports say, shared), simple.py and detailed.py (console
+               views), glossary.py (wording), text.py (console entry), json_out.py (API output)
+  checks.py    identity and ticker checks run before an analysis
+  web/         website: static/ (page, worker), render.py (report as HTML), session.py,
+               browser.py (Pyodide glue), relay.py (local relay), site.py (static build),
+               server.py (local server)
   engine.py    analyze(ticker) -> Report
   cli.py       command-line entry point
 relay/         Cloudflare Worker relay for the hosted website

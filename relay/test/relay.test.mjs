@@ -37,13 +37,14 @@ test("route allowlist", () => {
   assert.equal(matchRoute("sec/data/api/xbrl/frames/x.json"), null);
   assert.equal(matchRoute("sec/www/cgi-bin/browse-edgar"), null);
   assert.equal(matchRoute("other/x"), null);
+  assert.equal(matchRoute("fred/api/fred/series/observations"), null); // public download only, no key route
 });
 
 test("preflight only for allowed origins", async () => {
   const ok = await handle(req("sec/www/files/company_tickers.json", { method: "OPTIONS" }), ENV);
   assert.equal(ok.status, 204);
   assert.equal(ok.headers.get("Access-Control-Allow-Origin"), ORIGIN);
-  assert.match(ok.headers.get("Access-Control-Allow-Headers"), /X-SEC-Identity/);
+  assert.equal(ok.headers.get("Access-Control-Allow-Headers"), "X-SEC-Identity, Accept");
   const bad = await handle(req("sec/www/files/company_tickers.json", { method: "OPTIONS", origin: "https://evil.example" }), ENV);
   assert.equal(bad.status, 403);
 });
@@ -82,18 +83,12 @@ test("SEC filings are cached at the edge without the identity", async () => {
   assert.equal(calls.length, 1);
 });
 
-test("only allowlisted query parameters are forwarded; FRED key comes from its header", async () => {
-  const { fetch, calls } = upstream(() => new Response('{"observations":[]}'));
-  const key = "a".repeat(32);
-  await handle(req(`fred/api/fred/series/observations?series_id=AAA&api_key=${"z".repeat(32)}&file_type=json&callback=x`, { headers: { "X-FRED-Key": key } }), ENV, {}, { fetch, cache: null });
+test("only allowlisted query parameters are forwarded", async () => {
+  const { fetch, calls } = upstream(() => new Response("observation_date,AAA\n2026-09-01,6.03\n"));
+  await handle(req(`fred/web/graph/fredgraph.csv?id=AAA&api_key=${"z".repeat(32)}&callback=x`), ENV, {}, { fetch, cache: null });
   const u = new URL(calls[0].url);
-  assert.equal(u.origin + u.pathname, "https://api.stlouisfed.org/fred/series/observations");
-  assert.equal(u.searchParams.get("api_key"), key);
-  assert.equal(u.searchParams.getAll("api_key").length, 1);
-  assert.equal(u.searchParams.get("callback"), null);
-  const bad = await handle(req("fred/api/fred/series/observations?series_id=AAA", { headers: { "X-FRED-Key": "not-a-key" } }), ENV, {}, { fetch, cache: null });
-  assert.equal(bad.status, 400);
-  assert.equal(calls.length, 1);
+  assert.equal(u.origin + u.pathname, "https://fred.stlouisfed.org/graph/fredgraph.csv");
+  assert.equal(u.search, "?id=AAA");
 });
 
 test("encoded slashes in Yahoo symbols are refused", () => {
@@ -108,10 +103,10 @@ test("CORS responses expose the relay headers", async () => {
   assert.match(res.headers.get("Access-Control-Expose-Headers"), /X-Relay-Limit/);
 });
 
-test("upstream status codes pass through (FRED 400 for a bad key)", async () => {
-  const { fetch } = upstream(() => new Response('{"error_code":400}', { status: 400 }));
-  const res = await handle(req("fred/api/fred/series/observations?series_id=AAA"), ENV, {}, { fetch, cache: null });
-  assert.equal(res.status, 400);
+test("upstream status codes pass through (Yahoo 404 for an unknown symbol)", async () => {
+  const { fetch } = upstream(() => new Response('{"chart":{"error":{"code":"Not Found"}}}', { status: 404 }));
+  const res = await handle(req("yahoo/q1/v8/finance/chart/NOSUCH?range=5d"), ENV, {}, { fetch, cache: null });
+  assert.equal(res.status, 404);
   assert.equal(res.headers.get("Access-Control-Allow-Origin"), ORIGIN);
 });
 

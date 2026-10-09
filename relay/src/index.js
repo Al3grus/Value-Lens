@@ -4,9 +4,8 @@
 // It forwards only the paths and query parameters listed in relay_routes.json (shared with the
 // Python twin in src/valuelens/web/relay.py), only for the origins in ALLOWED_ORIGINS, and stores
 // nothing. The SEC identity arrives as X-SEC-Identity (browsers cannot set User-Agent) and leaves
-// as the User-Agent the SEC requires. The FRED key arrives as X-FRED-Key (so it is never part of
-// a URL the browser or a log could show) and is added to the upstream request only; FRED
-// responses are never cached.
+// as the User-Agent the SEC requires. Interest rates come from FRED's public download, so no
+// API key ever passes through here.
 
 import SPEC from "../../src/valuelens/web/relay_routes.json" with { type: "json" };
 
@@ -83,7 +82,7 @@ export async function handle(request, env = {}, ctx = {}, deps = {}) {
       headers: {
         ...cors,
         "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
-        "Access-Control-Allow-Headers": "X-SEC-Identity, X-FRED-Key, Accept",
+        "Access-Control-Allow-Headers": "X-SEC-Identity, Accept",
         "Access-Control-Max-Age": "86400",
       },
     });
@@ -116,13 +115,6 @@ export async function handle(request, env = {}, ctx = {}, deps = {}) {
   }
   if (route.browser_agent) headers["User-Agent"] = SPEC.browser_agent;
   if (route.accept) headers.Accept = route.accept;
-  if (route.key_header) {
-    const key = (request.headers.get(route.key_header) || "").trim();
-    if (key) {
-      if (!/^[a-z0-9]{32}$/.test(key)) return json(400, { error: "Malformed API key." }, cors);
-      params.set(route.key_param, key);
-    }
-  }
 
   const base = route.upstream + rest;
   const target = () => (params.toString() ? `${base}?${params}` : base);

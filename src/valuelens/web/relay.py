@@ -82,12 +82,6 @@ class Relay:
             out_headers["User-Agent"] = self.spec["browser_agent"]
         if route.get("accept"):
             out_headers["Accept"] = route["accept"]
-        if route.get("key_header"):
-            key = (lower.get(route["key_header"].lower()) or "").strip()
-            if key:
-                if not re.fullmatch(r"[a-z0-9]{32}", key):
-                    return _error(400, "Malformed API key.")
-                params.append((route["key_param"], key))
         url = route["upstream"] + rest
         if route.get("yahoo_crumb"):
             return self._yahoo(url, params, out_headers)

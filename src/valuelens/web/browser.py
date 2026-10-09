@@ -20,16 +20,12 @@ from ..data.http import HttpResponse, TransportError, with_params
 ROUTES = {
     "https://www.sec.gov/": "sec/www/",
     "https://data.sec.gov/": "sec/data/",
-    "https://api.stlouisfed.org/": "fred/api/",
     "https://fred.stlouisfed.org/": "fred/web/",
     "https://query1.finance.yahoo.com/": "yahoo/q1/",
     "https://query2.finance.yahoo.com/": "yahoo/q2/",
     "https://cloudflare-dns.com/": "dns/",
 }
 FORWARDED_HEADERS = {"accept": "Accept", "user-agent": "X-SEC-Identity"}
-# Query parameters that are secrets: sent as headers so they never appear in a URL (relay logs,
-# browser error messages). The relay puts them back on the upstream request.
-SECRET_PARAMS = {"api_key": "X-FRED-Key"}
 RELAY_LIMIT_MESSAGE = "ValueLens relay limit reached (120 requests per minute); wait a minute"
 
 
@@ -70,13 +66,11 @@ class XhrTransport:
         params: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
     ) -> HttpResponse:
-        params = dict(params or {})
-        extra = {SECRET_PARAMS[k]: str(params.pop(k)) for k in list(params) if k in SECRET_PARAMS}
         target = relay_url(self.relay_base, url, params)
         xhr = self._new()
         try:
             xhr.open(method, target, False)
-            for name, value in {**relay_headers(headers), **extra}.items():
+            for name, value in relay_headers(headers).items():
                 xhr.setRequestHeader(name, value)
             xhr.send()
         except Exception as exc:  # JsException: network error, CORS refusal, relay down
@@ -120,8 +114,6 @@ def call(cmd: str, arg: str = "", progress: Callable[[str], None] | None = None)
     try:
         if cmd == "identity":
             result = _session.set_identity(arg)
-        elif cmd == "fred":
-            result = _session.set_fred(arg)
         elif cmd == "ticker":
             result = _session.check_ticker(arg)
         elif cmd == "analyze":

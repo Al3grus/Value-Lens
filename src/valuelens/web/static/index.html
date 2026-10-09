@@ -19,11 +19,10 @@
 <header class="bar">
   <span class="brand">VALUELENS<small>equity research terminal</small></span>
   <ol class="stages" aria-label="Progress">
-    <li id="s1">1 CREDENTIALS</li><li id="s2">2 TICKER</li><li id="s3">3 REPORT</li>
+    <li id="s1">1 YOUR DETAILS</li><li id="s2">2 TICKER</li><li id="s3">3 REPORT</li>
   </ol>
   <span class="status" id="status">
-    <span id="st-creds" hidden>SEC <span class="ok">√</span>  FRED <span id="st-fred"></span></span>
-    <span id="st-budget" hidden></span>
+    <span id="st-creds" hidden>SEC <span class="ok">√</span></span>
   </span>
 </header>
 
@@ -31,44 +30,27 @@
   <!-- ---- stage 1: credentials --------------------------------------------------------- -->
   <section class="center" id="stage1" aria-labelledby="t1">
     <form class="panel" id="cred-form" novalidate autocomplete="off">
-      <span class="panel-title" id="t1">CREDENTIALS</span>
+      <span class="panel-title" id="t1">YOUR DETAILS</span>
 
       <div class="section">
         <div class="label">
-          <span class="name">SEC EDGAR IDENTITY</span>
+          <span class="name">NAME AND E-MAIL</span>
           <span class="tipwrap">
             <button class="q" type="button" aria-describedby="tip-sec">[?]</button>
             <span class="tip" role="tooltip" id="tip-sec">
-              <p><b>What it is.</b> The SEC's free database of company filings: 10+ years of income statements, balance sheets and cash flows for every US-listed company.</p>
-              <p><b>How to get it.</b> Nothing to sign up for. The SEC asks every automated tool to say who is behind it, so type your own name and an e-mail address you read.</p>
+              <p><b>Why we ask.</b> The company figures come from the SEC's free database of filings (EDGAR). The SEC asks every automated tool to say who is behind it, so it needs your own name and an e-mail address you read.</p>
+              <p><b>Nothing to sign up for.</b> No account and no key: just your name and e-mail.</p>
               <p><b>How it is checked.</b> We confirm the e-mail's domain receives mail and that the SEC accepts the identity. Nothing is stored: it lives in this tab only and is sent to sec.gov with each request. <a href="https://www.sec.gov/search-filings/edgar-application-programming-interfaces" target="_blank" rel="noopener noreferrer">SEC access rules</a></p>
             </span>
           </span>
-          <span class="tag req">required</span>
         </div>
+        <p class="help" id="why">The SEC, which publishes the company filings this analysis reads, asks everyone who downloads them to give a name and e-mail. Yours is sent only with requests to the SEC and is never stored.</p>
         <div class="grid2">
           <label class="prompt"><input id="name" type="text" maxlength="80" spellcheck="false"
-            placeholder="your full name" aria-label="Your full name"></label>
+            placeholder="your full name" aria-label="Your full name" aria-describedby="why"></label>
           <label class="prompt"><input id="email" type="email" maxlength="120" spellcheck="false"
-            placeholder="your e-mail" aria-label="Your e-mail address"></label>
+            placeholder="your e-mail" aria-label="Your e-mail address" aria-describedby="why"></label>
         </div>
-      </div>
-
-      <div class="section">
-        <div class="label">
-          <span class="name">FRED API KEY</span>
-          <span class="tipwrap">
-            <button class="q" type="button" aria-describedby="tip-fred">[?]</button>
-            <span class="tip" role="tooltip" id="tip-fred">
-              <p><b>What it is.</b> The St. Louis Fed's economic database. ValueLens reads two rates from it: the AAA corporate bond yield (Graham's formula) and the 10-year Treasury yield (the discount rate).</p>
-              <p><b>How to get it.</b> Free: create an account at fredaccount.stlouisfed.org, open <a href="https://fredaccount.stlouisfed.org/apikeys" target="_blank" rel="noopener noreferrer">API Keys</a>, request a key and paste the 32-character code here.</p>
-              <p><b>Limit.</b> 120 requests per minute per key; one analysis uses 2, and rates are cached for a day. Without a key the same rates come from FRED's public download.</p>
-            </span>
-          </span>
-          <span class="tag">optional</span>
-        </div>
-        <label class="prompt"><input id="fred" type="password" maxlength="40" spellcheck="false" autocomplete="off"
-          placeholder="32 characters, or leave empty" aria-label="FRED API key (optional)"></label>
       </div>
 
       <div class="result-box" id="cred-result" hidden aria-live="polite">
@@ -128,7 +110,7 @@
         <button class="btn small tab" role="tab" type="button" id="tab-simple" aria-controls="readout">SIMPLE</button>
         <button class="btn small tab" role="tab" type="button" id="tab-detailed" aria-controls="readout">DETAILED</button>
       </div>
-      <div class="readout" id="readout" role="tabpanel" tabindex="0"><pre id="pre"></pre></div>
+      <div class="readout" id="readout" role="tabpanel" tabindex="0"></div>
     </div>
     <div class="end" id="end" hidden>
       <button class="btn" type="button" id="exit">EXIT</button>
@@ -140,11 +122,11 @@
   <section class="center" id="closed" hidden>
     <div class="bye">
       <h1>SESSION CLOSED</h1>
-      <p>Your credentials have been cleared from this tab.</p>
+      <p>Your name and e-mail have been cleared from this tab.</p>
       <div class="row" style="justify-content:center"><button class="btn primary" type="button" id="restart">START AGAIN</button></div>
     </div>
   </section>
 </main>
-<footer class="foot">Educational only. Not investment advice. Data: SEC EDGAR, FRED, Yahoo Finance. Runs in your browser; credentials are never stored.</footer>
+<footer class="foot">Educational only. Not investment advice. Data: SEC EDGAR, FRED, Yahoo Finance. Runs in your browser; your name and e-mail are never stored.</footer>
 </body>
 </html>

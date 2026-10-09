@@ -7,14 +7,29 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from ..analysis.metrics import finite, fmt_money, pct
+from ..analysis.metrics import finite
 from ..models import Report, Scorecard, Status
+from .content import (
+    DISCLAIMER,
+    Row,
+    data_line,
+    health_status,
+    margin_of_safety,
+    meta,
+    scale,
+    score_summary,
+    sentiment_rows,
+    trend_rows,
+    valuation_rows,
+    verdict_reasons,
+)
 from .glossary import HEALTH_MEANING, MEANING, METHOD_MEANING, PILLARS, pillar_word, summarize
 from .style import (
     ACCENT,
     BAD,
     GOOD,
     MUTED,
+    TONE,
     WARN,
     Symbols,
     badge,
@@ -26,8 +41,6 @@ from .style import (
     status_cell,
     symbols,
 )
-
-DISCLAIMER = "Educational only. Not investment advice. Do your own research and consult a professional."
 
 
 def _panel(body: RenderableType, title: str, sym: Symbols, subtitle: Text | None = None) -> Panel:
@@ -51,20 +64,27 @@ def _table(sym: Symbols, *columns: tuple[str, dict]) -> Table:
 
 
 def _score_text(card: Scorecard, kinds: tuple[str, ...] | None = None) -> Text:
-    n, p = card.evaluated(kinds), card.passed(kinds)
-    if not n:
+    s = score_summary(card, kinds)
+    if s is None:
         return Text("n/a", style=MUTED)
-    ratio = p / n
-    style = GOOD if ratio >= 0.7 else WARN if ratio >= 0.45 else BAD
-    return Text.assemble((f"{p}/{n}", f"bold {style}"), (f" passed ({ratio:.0%})", MUTED))
+    passed, rest, tone = s
+    return Text.assemble((passed, f"bold {TONE[tone]}"), (rest, MUTED))
 
 
 def _mos_text(mos: float | None) -> Text:
-    if mos is None:
-        return Text("n/a", style=MUTED)
-    if mos >= 0:
-        return Text(f"{mos:.0%} below value (margin of safety)", style=f"bold {GOOD}")
-    return Text(f"{-mos:.0%} above value (no margin of safety)", style=f"bold {BAD}")
+    text, tone = margin_of_safety(mos)
+    return Text(text, style=MUTED if tone == "muted" else f"bold {TONE[tone]}")
+
+
+def _kv(rows: list[Row]) -> Table:
+    kv = Table.grid(padding=(0, 3))
+    kv.add_column(style=MUTED, no_wrap=True)
+    kv.add_column(no_wrap=True)
+    kv.add_column(style=MUTED)
+    for row in rows:
+        style = " ".join(s for s in ("bold" if row.strong else "", TONE[row.tone]) if s)
+        kv.add_row(row.label, Text(row.value, style=style), row.note)
+    return kv
 
 
 def _criteria_table(card: Scorecard, sym: Symbols, ascii_only: bool) -> Table:
@@ -90,15 +110,10 @@ def _criteria_table(card: Scorecard, sym: Symbols, ascii_only: bool) -> Table:
 def _verdict_panel(r: Report, sym: Symbols, ascii_only: bool) -> Panel:
     d, s = r.decision, summarize(r)
     head = Text.assemble((r.name, "bold"), "  ", (r.ticker, f"bold {ACCENT}"))
-    meta = [m for m in (r.sector, r.industry) if m]
-    if meta:
-        head.append(f"   {f' {sym.dot} '.join(meta)}", style=MUTED)
-    data = Text(
-        f"Price {money(r.price, r.currency)}  {sym.dot}  Market value {fmt_money(r.market_cap, r.currency)}  {sym.dot}  "
-        f"{r.data_source}, FY{r.fiscal_years[0][:4]}-FY{r.fiscal_years[-1][:4]} ({len(r.fiscal_years)}y), "
-        + (f"TTM to {r.ttm_end}" if r.ttm_end > r.fiscal_years[-1] else "latest = annual report"),
-        style=MUTED,
-    )
+    sector = meta(r)
+    if sector:
+        head.append(f"   {f' {sym.dot} '.join(sector)}", style=MUTED)
+    data = Text(data_line(r, sym.dot), style=MUTED)
 
     grid = Table.grid(padding=(0, 2))
     for _ in range(4):
@@ -142,10 +157,7 @@ def _verdict_panel(r: Report, sym: Symbols, ascii_only: bool) -> Panel:
     )
     points.add_row(left, right)
     lines += [points, Text()]
-    # Reasons that the bars and tables already show are skipped; guardrail explanations stay.
-    for reason in d.reasons:
-        if reason.startswith(("Business quality", "Blended fair value")):
-            continue
+    for reason in verdict_reasons(d):
         lines.append(Text.assemble((f"{sym.bullet} ", ACCENT), pretty_label(reason, ascii_only)))
     for warning in d.warnings:
         lines.append(
@@ -183,34 +195,11 @@ def _valuation_panel(r: Report, sym: Symbols, ascii_only: bool) -> Panel:
                 _mos_text(v.margin_of_safety),
             )
         )
-        g = gauge(v.bear, v.bull, v.fair_value, r.price, r.currency, sym)
+        g = gauge(scale(v, r.price), r.currency, sym)
         if g:
             parts += [Text(), *g]
     parts.append(Text())
-
-    kv = Table.grid(padding=(0, 3))
-    kv.add_column(style=MUTED, no_wrap=True)
-    kv.add_column(no_wrap=True)
-    kv.add_column(style=MUTED)
-    if finite(v.implied_growth):
-        hist = f"vs {pct(v.historical_growth)}/yr delivered (5y)" if finite(v.historical_growth) else ""
-        note = f" [{v.implied_growth_note}]" if v.implied_growth_note else ""
-        kv.add_row("Market-implied growth", Text(f"{pct(v.implied_growth)}/yr for 5y{note}", style="bold"),
-                   f"{hist} {sym.dot} growth the price already assumes")  # fmt: skip
-    if finite(v.discount_rate):
-        ke = f"cost of equity {pct(v.cost_of_equity)}" if finite(v.cost_of_equity) else ""
-        kv.add_row("Discount rate (WACC)", pct(v.discount_rate), f"{ke} {sym.dot} return investors require")
-    if finite(v.fcf_yield):
-        kv.add_row("Owner FCF yield", pct(v.fcf_yield), "cash for owners ÷ market value")
-    if finite(v.maintenance_capex_share) and v.maintenance_capex_share < 0.999:
-        kv.add_row("Maintenance capex", f"{v.maintenance_capex_share:.0%} of capex",
-                   "rest treated as growth investment (Greenwald)")  # fmt: skip
-    if finite(v.earnings_yield):
-        kv.add_row("Earnings yield (EBIT/EV)", pct(v.earnings_yield), "operating profit ÷ company value")
-    if finite(v.pe_now):
-        med = f"10y median {v.pe_median_10y:.1f}" if finite(v.pe_median_10y) else ""
-        kv.add_row("P/E (core EPS)", f"{v.pe_now:.1f}", med)
-    parts.append(kv)
+    parts.append(_kv(valuation_rows(r, sym.dot)))
     for n in v.notes:
         parts.append(Text(f"{sym.flag} {n}", style=WARN))
     return _panel(Group(*parts), "INTRINSIC VALUE", sym)
@@ -242,13 +231,12 @@ def _health_panel(r: Report, sym: Symbols) -> Panel:
         ("What it means", {"ratio": 5, "style": MUTED}),
     )
     for h in r.health:
-        status = Status.NA if h.value is None else Status.FAIL if h.red_flag else Status.PASS
-        zone_style = BAD if h.red_flag else (MUTED if h.value is None else GOOD)
+        status, tone = health_status(h)
         t.add_row(
             status_cell(status, sym),
             Text(h.name),
             Text(f"{h.value:.2f}" if finite(h.value) else "n/a"),
-            Text(h.zone, style=zone_style),
+            Text(h.zone, style=TONE[tone]),
             Text(HEALTH_MEANING.get(h.name, "")),
         )
     details = [
@@ -265,52 +253,14 @@ def _factors_panel(r: Report, sym: Symbols, ascii_only: bool) -> Panel:
 
 def _trend_panel(r: Report, sym: Symbols) -> Panel:
     t = r.technicals
-    trend_style = {"UPTREND": GOOD, "DOWNTREND": BAD}.get(t.trend, WARN)
-    kv = Table.grid(padding=(0, 3))
-    kv.add_column(style=MUTED, no_wrap=True)
-    kv.add_column(no_wrap=True)
-    kv.add_column(style=MUTED)
-    kv.add_row("Trend", Text(t.trend, style=f"bold {trend_style}"), "price vs averages and 12-month momentum")
-    if t.trend != "N/A":
-        kv.add_row("50 / 200-day average", f"{money(t.sma50, r.currency)} / {money(t.sma200, r.currency)}",
-                   "short vs long-term average price")  # fmt: skip
-        kv.add_row(
-            "12-1 month momentum", pct(t.momentum_12_1), "return over the past year, excluding last month"
-        )
-        kv.add_row(
-            "RSI (14 days)", f"{t.rsi14:.0f}" if finite(t.rsi14) else "n/a", "70+ overbought, 30- oversold"
-        )
-        kv.add_row("From 52-week high", pct(t.from_52w_high), "how far below the year's peak")
-        kv.add_row("Volatility (1y)", pct(t.volatility_1y), "typical yearly price swing")
     notes = Text(f"Signals: {f' {sym.dot} '.join(t.notes)}", style=MUTED) if t.notes else Text()
-    return _panel(Group(kv, notes), "PRICE TREND (timing only, not scored)", sym)
+    return _panel(Group(_kv(trend_rows(r)), notes), "PRICE TREND (timing only, not scored)", sym)
 
 
 def _sentiment_panel(r: Report, sym: Symbols) -> Panel | None:
-    s = r.sentiment
-    if not s:
+    if not r.sentiment:
         return None
-    kv = Table.grid(padding=(0, 3))
-    kv.add_column(style=MUTED, no_wrap=True)
-    kv.add_column(no_wrap=True)
-    kv.add_column(style=MUTED)
-    if "analyst_target" in s:
-        kv.add_row(
-            "Analyst mean target",
-            f"{money(s['analyst_target'], r.currency)} ({pct(s['analyst_upside'])})",
-            f"{s.get('analyst_count') or '?'} analysts {sym.dot} rating: {s.get('analyst_rating') or 'n/a'}",
-        )
-    if "short_pct_float" in s:
-        kv.add_row("Short interest", pct(s["short_pct_float"]), "share of tradable stock bet against")
-    if s.get("insider_buy_trans") is not None or s.get("insider_sell_trans") is not None:
-        kv.add_row(
-            "Insider trades (6m)",
-            f"{int(s.get('insider_buy_trans') or 0)} buys / {int(s.get('insider_sell_trans') or 0)} sells",
-            "includes stock awards; context only",
-        )
-    if "beta" in s:
-        kv.add_row("Beta", f"{s['beta']:.2f}", "1.0 = moves with the market")
-    return _panel(kv, "MARKET SENTIMENT (information only)", sym)
+    return _panel(_kv(sentiment_rows(r, sym.dot)), "MARKET SENTIMENT (information only)", sym)
 
 
 def build_detailed(r: Report, ascii_only: bool = False) -> list[RenderableType]:

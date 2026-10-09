@@ -18,14 +18,6 @@
       "identity": true,
       "edge_cache_s": 21600
     },
-    "fred/api/": {
-      "upstream": "https://api.stlouisfed.org/",
-      "paths": ["^fred/series/observations$"],
-      "params": ["series_id", "file_type", "sort_order", "limit"],
-      "methods": ["GET"],
-      "key_header": "X-FRED-Key",
-      "key_param": "api_key"
-    },
     "fred/web/": {
       "upstream": "https://fred.stlouisfed.org/",
       "paths": ["^graph/fredgraph\\.csv$"],

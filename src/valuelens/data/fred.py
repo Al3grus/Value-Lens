@@ -1,4 +1,5 @@
-"""Latest value of a FRED series via the public CSV download (no API key needed).
+"""Latest value of a FRED series via the public CSV download (no API key needed), or FRED's
+official API when the command-line config has a key. Both give the same figures.
 
 Series used:
   AAA   - Moody's Seasoned Aaa Corporate Bond Yield (Graham's "Y")
@@ -9,21 +10,12 @@ from __future__ import annotations
 
 import csv
 import io
-import re
-from dataclasses import dataclass
 
 from .cache import FileCache
 from .http import HttpxTransport, Transport, TransportError
 
 FRED_CSV = "https://fred.stlouisfed.org/graph/fredgraph.csv"
 FRED_API = "https://api.stlouisfed.org/fred/series/observations"
-KEY_RE = re.compile(r"^[a-z0-9]{32}$")  # "a 32 character lower-cased alpha-numeric string"
-
-
-def key_problem(key: str) -> str | None:
-    if not KEY_RE.match(key or ""):
-        return "A FRED API key is 32 lower-case letters and digits."
-    return None
 
 
 def latest_value(
@@ -75,33 +67,6 @@ def _from_csv(series: str, transport: Transport) -> tuple[float, str] | None:
     except TransportError:
         return None
     return parse_latest(resp.text) if resp.ok else None
-
-
-@dataclass
-class KeyCheck:
-    ok: bool
-    message: str
-    status: int | None = None
-    observation: tuple[float, str] | None = None
-
-
-def check_key(api_key: str, transport: Transport) -> KeyCheck:
-    """Validate a key with one live request (latest AAA yield, limit 1)."""
-    problem = key_problem(api_key)
-    if problem:
-        return KeyCheck(False, problem)
-    obs, status, error = _from_api("AAA", api_key, transport, limit=1)
-    if status is None:
-        return KeyCheck(False, f"Could not reach FRED ({error}). Try again in a moment.")
-    if status == 429:
-        return KeyCheck(
-            False, "FRED says this key has used its 120 requests for this minute. Wait a minute.", status
-        )
-    if status == 400 and "api_key" in error:
-        return KeyCheck(False, "FRED does not recognise this key. Copy it again from fredaccount.stlouisfed.org/apikeys.", status)  # fmt: skip
-    if status != 200 or obs is None:
-        return KeyCheck(False, f"FRED answered with an error: {error or status}.", status)
-    return KeyCheck(True, "Key accepted by FRED.", status, obs)
 
 
 def parse_api(data: dict) -> tuple[float, str] | None:

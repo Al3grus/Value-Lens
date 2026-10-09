@@ -13,7 +13,7 @@ import pandas as pd
 import pytest
 from fakes import FakeTransport
 
-from valuelens.checks import DOH_URL, check_fred_key, check_identity, check_ticker
+from valuelens.checks import DOH_URL, check_identity, check_ticker
 from valuelens.data import fred
 from valuelens.data.http import TransportError
 from valuelens.data.sec import FACTS_URL, SUBMISSIONS_URL, TICKERS_URL, SecError, identity_problem
@@ -253,33 +253,6 @@ def test_identity_dns_unavailable_does_not_block():
 
 
 # --------------------------------------------------------------------------------------
-# FRED key
-# --------------------------------------------------------------------------------------
-def test_fred_key_checked_live():
-    t = world()
-    res = check_fred_key("A" * 32, t)  # pasted in capitals: normalised
-    assert res.ok and "6.03%" in res.steps[-1].detail
-    assert len(t.urls("api.stlouisfed.org")) == 1 and "limit=1" in t.urls("api.stlouisfed.org")[0]
-
-
-def test_fred_key_unregistered():
-    res = check_fred_key("b" * 32, world())
-    assert not res.ok and "does not recognise" in res.message
-
-
-def test_fred_key_rate_limited():
-    t = world(**{fred.FRED_API: (429, {"error_code": 429, "error_message": "Too Many Requests"})})
-    res = check_fred_key("a" * 32, t)
-    assert not res.ok and "120" in res.message
-
-
-def test_fred_key_bad_format_makes_no_request():
-    t = world()
-    assert not check_fred_key("short", t).ok
-    assert t.calls == []
-
-
-# --------------------------------------------------------------------------------------
 # Ticker
 # --------------------------------------------------------------------------------------
 def _quote(t):
@@ -444,16 +417,12 @@ def test_relay_url_and_headers():
     assert log == [("HEAD", "/relay/sec/www/files/company_tickers.json", {"X-SEC-Identity": IDENT})]
 
 
-def test_fred_key_travels_as_header_not_url():
-    from valuelens.web.browser import XhrTransport
+def test_browser_never_relays_the_fred_api():
+    from valuelens.web.browser import relay_url
 
-    log = []
-    XhrTransport("/relay", lambda: FakeXhr(None, log)).request(
-        "GET", fred.FRED_API, params={"series_id": "AAA", "api_key": "a" * 32}
-    )
-    _method, url, headers = log[0]
-    assert "api_key" not in url and "a" * 32 not in url
-    assert headers == {"X-FRED-Key": "a" * 32}
+    with pytest.raises(TransportError):  # rates come from FRED's public download: no key, no API route
+        relay_url("/relay", fred.FRED_API, {"series_id": "AAA"})
+    assert relay_url("/relay", fred.FRED_CSV, {"id": "AAA"}) == "/relay/fred/web/graph/fredgraph.csv?id=AAA"
 
 
 def test_relay_limit_is_reported_as_relay_limit():
@@ -506,9 +475,9 @@ def test_xhr_network_failure_is_transport_error():
 
     with pytest.raises(TransportError) as err:
         XhrTransport("/relay", lambda: Dead(None, [])).request(
-            "GET", fred.FRED_API, params={"api_key": "a" * 32}
+            "GET", TICKERS_URL, headers={"User-Agent": IDENT}
         )
-    assert "a" * 32 not in str(err.value) and "NetworkError" not in str(err.value)
+    assert "company_tickers" not in str(err.value) and "NetworkError" not in str(err.value)
 
 
 @pytest.fixture
@@ -532,10 +501,7 @@ def test_browser_flow_end_to_end(browser_session):
 
     r = call(browser, "identity", IDENT)
     assert r["ok"] and r["result"]["ok"]
-    r = call(browser, "fred", "a" * 32)
-    assert r["ok"] and r["result"]["ok"]
-    assert "key" not in r["result"]["data"]  # the key is never echoed back
-    assert "a" * 32 not in json.dumps(r)
+    assert not call(browser, "fred", "a" * 32)["ok"]  # no FRED key step any more
 
     r = call(browser, "analyze", "TEST")
     assert not r["ok"] and "Check the ticker" in r["error"]
@@ -548,10 +514,10 @@ def test_browser_flow_end_to_end(browser_session):
     res = r["result"]
     assert steps == ["market", "filings", "rates", "analysis"]
     assert res["signal"] in {"STRONG BUY", "BUY", "HOLD", "SELL", "STRONG SELL"}
-    assert "<span" in res["simple"] and "background-color" not in res["simple"][:0]
+    assert res["simple"].startswith('<article class="rp rp-simple">')
+    assert res["detailed"].startswith('<article class="rp rp-detailed">')
     usage = res["usage"]
-    assert usage["fred"]["total"] == 3  # key check + AAA + DGS10
-    assert usage["mode"]["fred"] == "key"
+    assert usage["fred_public"]["total"] == 2 and usage["fred"]["total"] == 0  # AAA + DGS10, public download
     assert usage["sec"]["total"] >= 3
 
     # Second run: filings and rates come from the cache.
@@ -561,11 +527,9 @@ def test_browser_flow_end_to_end(browser_session):
     assert not [u for u in new if "sec.gov" in u or "stlouisfed" in u], new
 
 
-def test_browser_without_fred_key_uses_public_csv(browser_session):
+def test_browser_rates_come_from_public_download(browser_session):
     browser, t = browser_session
     call(browser, "identity", IDENT)
-    r = call(browser, "fred", "")
-    assert r["result"]["ok"] and r["result"]["usage"]["mode"]["fred"] == "public"
     call(browser, "ticker", "TEST")
     assert call(browser, "analyze", "TEST")["ok"]
     assert t.urls("fredgraph.csv") and not t.urls("api.stlouisfed.org")
@@ -574,7 +538,6 @@ def test_browser_without_fred_key_uses_public_csv(browser_session):
 def test_browser_forget_clears_credentials(browser_session):
     browser, _ = browser_session
     call(browser, "identity", IDENT)
-    call(browser, "fred", "")
     call(browser, "forget")
     assert not call(browser, "ticker", "TEST")["ok"]
 
@@ -630,16 +593,15 @@ def test_relay_only_forwards_allowlisted_paths_and_params(relay):
     assert r.handle("GET", "sec/data/../../etc/passwd", [], {"X-SEC-Identity": IDENT}).status == 404
     assert r.handle("GET", "sec/www/cgi-bin/browse-edgar", [], {"X-SEC-Identity": IDENT}).status == 404
     assert r.handle("GET", "anything/else", [], {}).status == 404
-    assert r.handle("POST", "fred/api/fred/series/observations", [], {}).status == 405
-    assert r.handle("GET", "fred/api/fred/series/observations\n", [], {}).status == 404
+    assert r.handle("GET", "fred/api/fred/series/observations", [], {}).status == 404  # no key route
+    assert r.handle("POST", "fred/web/graph/fredgraph.csv", [], {}).status == 405
+    assert r.handle("GET", "fred/web/graph/fredgraph.csv\n", [], {}).status == 404
     assert r.handle("GET", "yahoo/q1/v8/finance/chart/..%2Fv7%2Ffinance%2Fquote", [], {}).status == 404
     res = r.handle(
-        "GET", "fred/api/fred/series/observations", [("api_key", "z" * 32)], {"X-FRED-Key": "a" * 32}
+        "GET", "fred/web/graph/fredgraph.csv", [("id", "AAA"), ("evil", "1"), ("api_key", "z" * 32)], {}
     )
-    assert "api_key=" + "a" * 32 in str(up.seen[-1].url) and "z" * 32 not in str(up.seen[-1].url)
-    res = r.handle("GET", "fred/api/fred/series/observations", [("series_id", "AAA"), ("evil", "1")], {})
     assert res.status == 200
-    assert "evil" not in str(up.seen[-1].url) and "series_id=AAA" in str(up.seen[-1].url)
+    assert str(up.seen[-1].url) == "https://fred.stlouisfed.org/graph/fredgraph.csv?id=AAA"
 
 
 def test_relay_yahoo_summary_gets_crumb(relay):
@@ -740,7 +702,7 @@ sys.modules["numpy"] = None
 sys.modules["pandas"] = None
 from valuelens.web import browser
 browser.start("/relay", {str(tmp_path)!r}, transport=t)
-r = [json.loads(browser.call(c, a)) for c, a in [("identity", IDENT), ("fred", ""), ("ticker", "TEST")]]
+r = [json.loads(browser.call(c, a)) for c, a in [("identity", IDENT), ("ticker", "TEST")]]
 assert all(x["ok"] and x["result"]["ok"] for x in r), r
 print("ok")
 """
