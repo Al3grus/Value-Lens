@@ -1,0 +1,61 @@
+# Builds the website and publishes it to GitHub Pages.
+# One-time setup (CLAUDE.md, "Publishing"): Settings -> Pages -> Source: GitHub Actions, and
+# Settings -> Secrets and variables -> Actions -> Variables: RELAY_URL = your Worker's address, and
+# optionally TURNSTILE_SITEKEY = your Turnstile widget's site key (see relay/wrangler.jsonc).
+# Actions are pinned to commit hashes; Dependabot keeps them current.
+name: Website
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - name: Install
+        run: uv sync --extra dev
+      - name: Test
+        run: uv run pytest -q
+      - name: Build site
+        env:
+          RELAY_URL: ${{ vars.RELAY_URL }}
+          TURNSTILE_SITEKEY: ${{ vars.TURNSTILE_SITEKEY }}
+        run: |
+          if [ -z "$RELAY_URL" ]; then
+            echo "::error::Set the repository variable RELAY_URL to your relay Worker's https address."
+            exit 1
+          fi
+          if [ -z "$TURNSTILE_SITEKEY" ]; then
+            echo "::warning::TURNSTILE_SITEKEY is not set: the site runs without the Turnstile check."
+          fi
+          uv run python -m valuelens.web.site --relay "$RELAY_URL" --turnstile "$TURNSTILE_SITEKEY" --out _site
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

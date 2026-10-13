@@ -1,0 +1,27 @@
+# Copy to valuelens.toml (git-ignored) and edit. Only the keys you set override the defaults
+# in src/valuelens/defaults.toml.
+
+[sec]
+user_agent = "Your Name you@example.com"
+
+# Optional: free FRED API key (https://fredaccount.stlouisfed.org/apikeys) for the AAA and
+# 10-year Treasury yields. Without it, ValueLens uses FRED's public CSV download instead.
+# [fred]
+# api_key = "your 32-character key"
+
+# Examples of overrides:
+# [graham]
+# dividend_years = 10          # less strict than Graham's 20 years
+#
+# [buffett]
+# min_gross_margin = 0.30
+#
+# [valuation]
+# equity_risk_premium = 0.055
+# subtract_sbc = false
+#
+# [decision.weights]
+# quality = 0.40
+# safety = 0.20
+# factors = 0.10
+# valuation = 0.30

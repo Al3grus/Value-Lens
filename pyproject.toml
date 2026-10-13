@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "valuelens"
+version = "0.1.0"
+description = "Graham + Buffett + evidence-based factor analysis of a stock, with a combined buy/hold/sell verdict."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+authors = [{ name = "Al3grus" }]
+dependencies = [
+    "fastapi>=0.143",
+    "httpx2>=2.13",
+    "pandas>=2.2",
+    "rich>=15",
+    "uvicorn>=0.54",
+    "numpy>=1.26",
+    "yfinance>=1.7",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.15"]
+
+[project.scripts]
+valuelens = "valuelens.cli:main"
+valuelens-dashboard = "valuelens.web.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/valuelens"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+ignore = ["RUF001", "RUF002", "RUF003", "E501", "E731"]  # unicode symbols in report strings are intentional; formatter owns line length

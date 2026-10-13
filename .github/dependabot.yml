@@ -1,0 +1,34 @@
+# Weekly update pull requests. A release must be a week old before Dependabot proposes it, so a
+# compromised release is usually caught and pulled before it reaches this repository.
+# Security fixes are proposed straight away (Settings -> Advanced Security -> Dependabot).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      python:
+        patterns: ["*"]
+
+  - package-ecosystem: npm
+    directory: /relay
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      relay:
+        patterns: ["*"]

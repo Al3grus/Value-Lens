@@ -1,0 +1,108 @@
+# ValueLens — notes for Claude Code
+
+Single-stock value analysis: Graham + Buffett criteria, intrinsic value, forensic scores,
+factors, technical timing overlay, combined verdict. CLI (`valuelens`) and a website (GitHub
+Pages + Pyodide in the browser + a Cloudflare Worker relay; `valuelens-dashboard` serves the same
+site locally with a Python relay).
+
+## Commands
+- Install: `uv sync --extra dev` (uv manages Python and .venv; commit `uv.lock`)
+- Website locally: `uv run valuelens-dashboard` (site + local relay on 127.0.0.1:8765)
+- Build the static site: `uv run python -m valuelens.web.site --relay https://<worker> --turnstile <sitekey> --out _site`
+  (downloads Pyodide's core and stops unless it matches the hashes in `site.PYODIDE_CORE`)
+- Relay tests: `cd relay && node --test`; deploy: `npx wrangler deploy`
+- Run: `uv run valuelens MSFT` / `--json` (needs `[sec] user_agent` in valuelens.toml or
+  `VALUELENS_SEC_USER_AGENT="Name email"`)
+- Test: `uv run pytest` (fully offline). Lint/format: `uv run ruff check . && uv run ruff format --check .`
+
+## Publishing (the README is for visitors only: what it is + link to the site)
+- Site: https://al3grus.github.io/Value-Lens/. Pages source is GitHub Actions
+  (`.github/workflows/pages.yml`, runs on push to main); it needs the repository variable
+  `RELAY_URL` = the relay Worker's https address (`gh variable set RELAY_URL --body <url>`).
+- Relay: `cd relay; npx wrangler deploy`. `ALLOWED_ORIGINS` in `relay/wrangler.jsonc` is the
+  site origin (`https://al3grus.github.io`, no path). Free plan: 100,000 requests/day (refused
+  requests count too); each session is limited to 120/min by `RATE_LIMITER`, new sessions to
+  10/min per IP by `SESSION_LIMITER`.
+- Turnstile: widget "ValueLens" (managed, hostname al3grus.github.io) on the Al3grus Cloudflare
+  account (`npx wrangler turnstile widget list`). Its site key is the repository variable
+  `TURNSTILE_SITEKEY`; the relay has the secrets `TURNSTILE_SECRET` (widget secret) and
+  `SESSION_KEY` (random). With both secrets set the relay requires a session; the page treats a
+  404 from `/session` as "relay without sessions". Kill switch: `npx wrangler secret delete
+  TURNSTILE_SECRET`. Turning it on: deploy the relay, push the site, then put the secrets.
+- Deploy order when routes change: push the site first, then deploy the relay.
+- Pyodide upgrade: change `PYODIDE_VERSION` in `web/site.py` and re-pin `PYODIDE_CORE` from the
+  files in `pyodide-core-<version>.tar.bz2` on Pyodide's GitHub release (they must equal jsDelivr's).
+- Repository security: Actions are pinned to commit hashes (Dependabot updates them, with a
+  7-day cooldown), CodeQL and private vulnerability reporting are on, `SECURITY.md` says how to report.
+
+## Architecture
+- `data/` — network + normalisation only. `sec.py` parses XBRL companyfacts (annual = 340–390-day
+  periods from 10-K/20-F, latest filing wins; TTM = FY + YTD − prior YTD with per-part filing dates
+  for split adjustment). `concepts.py` maps canonical fields to ordered US-GAAP concept lists.
+  `normalize.py` derives canonical columns. `bundle.py` assembles a `DataBundle` (split, FX,
+  ADR/share-class reconciliation).
+- `analysis/` — pure functions of `DataBundle` + config → scorecards/valuation/decision. No I/O.
+  `returns.py` holds the ROE/ROIC/ROTCE series shared by `buffett.py` and `valuation.py`. Banks and
+  insurers (`DataBundle.is_financial`) get balance-sheet checks in Graham's card, ROTCE, book-value
+  growth and P/TBV in Buffett's, and an excess-return value instead of the DCF.
+- `report/` — `glossary.py` (all plain-English wording: per-check meanings, strengths/concerns
+  sentences, headline), `content.py` (what the views say as plain data: rows, ranges, tones;
+  shared by the terminal views and `web/render.py`), `simple.py` and `detailed.py` (rich renderers), `style.py` (palette,
+  badges, bars, gauge), `progress.py` (live loading checklist), `json_out.py` (JSON incl. summary
+  and glossary). `engine.py` wires it together; `cli.py` is the entry point.
+- `data/http.py` — every request goes through a `Transport` (`HttpxTransport` on CPython,
+  `web.browser.XhrTransport` in the browser). Never import an HTTP library elsewhere.
+  `data/usage.py` counts requests per service against published limits (SEC 10/s, FRED 120/min).
+  `data/bundle.Sources` picks the market source: `YFinanceSource` (CLI) or `YahooHttpSource`
+  (browser; chart + quoteSummary endpoints, statements from SEC only).
+- `checks.py` — identity (format, typo domains, DNS-over-HTTPS MX, SEC HEAD), ticker (Yahoo
+  quote, SEC ticker list). The website asks only for name + e-mail; its rates always come from
+  FRED's public CSV (same figures as the keyed API), so the relay has no FRED-API route. Must stay importable without numpy/pandas: the
+  browser answers stages 1–2 before those finish downloading (`tests/test_web.py` enforces it).
+- `web/` — `static/` (index.html, app.js, engine.mjs worker, style.css; no build step, CSP meta),
+  `render.py` (report as HTML; borders, bars and gauge are CSS `.rp` rules in style.css, never
+  box-drawing characters; every text node html-escaped), `session.py` (one visitor, identity in memory only), `browser.py` (Pyodide entry points;
+  `XhrTransport` sends the relay session as `X-Relay-Session`, and a refused session comes back to
+  app.js as `session_expired`, which gets a new Turnstile token on the next press),
+  `relay.py` + `relay_routes.json` (the one allow-list, also imported by `relay/src/index.js`;
+  keep `browser.ROUTES` in sync), `site.py` (static build + Python zip, Pyodide version pin; the
+  site serves Pyodide's core from `pyodide/<version>/`, so the CSP allows scripts only from 'self'
+  and Turnstile; numpy/pandas come from jsDelivr, checked by the browser against the lock file's
+  SHA-256; the page loads its files as `name?v=<site version>` and checks `version.json` uncached,
+  so a tab restored from cache updates itself), `server.py` (local, `no-store`, no version, Pyodide
+  from jsDelivr, no Turnstile).
+- `relay/` — Cloudflare Worker (wrangler.jsonc), node:test tests. CORS only for ALLOWED_ORIGINS.
+  `POST /session` swaps a Turnstile token (siteverify) for an HMAC-signed one-hour session.
+- Browser target is Pyodide (Python 3.14, pandas 3.0.x, numpy 2.4.x); CI tests 3.14.
+- HTTP client is `httpx2` (maintained successor of httpx, also what Starlette's TestClient uses).
+- Report glyphs are restricted to WGL4 (`style.WGL4_SAFE` + light box drawing) so borders align
+  in every monospace font; `tests/test_views.py` enforces it.
+- Rendering uses `rich` with markup disabled (`text.make_console`): build `Text` objects, never
+  markup strings. `--ascii` output is guaranteed ASCII by `AsciiFile`.
+- All thresholds, weights, minimum history lengths and policy constants (confidence rules, RSI
+  levels, cost-of-debt spreads, tax-rate band) live in `src/valuelens/defaults.toml`; never
+  hard-code one. Canonical model constants (Altman zones, Beneish coefficients) stay in code.
+
+## Conventions
+- Missing data → `Criterion.na` (`Status.NA` with a reason). In `Scorecard.score` (the pillar
+  scores and framework signals) it is simply not passed, and it counts against coverage, so
+  missing data can only lower a score; decision.py holds the verdict at HOLD (in both directions)
+  when coverage of the applicable criteria < 60%, and caps BUY at HOLD with a single valuation
+  method. A check that is not
+  meaningful for the company (banks, insurers, utilities; ROE with negative equity; the $1 test
+  when nothing was retained) is `Criterion.nm`: left out of scores and of coverage.
+  `Scorecard.ratio` (passed / evaluated) is only for display. Piotroski signals without data are
+  not passed either; Altman or Piotroski that cannot be computed at all count 50 in the safety
+  pillar. All three health scores are n/m for financials and Altman also for utilities (their
+  permanent leverage scores as "distress"). `tests/test_audit_fixes.py` blanks every canonical
+  column to enforce this; the last block of that file holds cases found on real companies.
+- No capex concept matched → `capex_data_found = False`: FCF stays NaN (never CFO), the cash-flow
+  tests are N/A and the DCF is skipped. Same idea as `debt_data_found`.
+- Core earnings are chosen once per company (non-operating items material in any of the last 3
+  fiscal years) and applied to every year and the TTM, so EPS series never flip year to year.
+- A short record that fails a test (e.g. 5 years of dividends vs 20 required) is FAIL, not N/A.
+- Money columns are converted to the price currency; `eps`, `shares`, `shares_outstanding` are not.
+- New metrics need a unit test in `tests/` using the synthetic fixture (`tests/fixtures.py`).
+- Every new check needs entries in `report/glossary.py` (`MEANING`, `PLAIN`, `THEME`);
+  `tests/test_views.py` enforces this. Pass `threshold=` to `Criterion.check` so the wording can
+  quote the bound; never write a threshold into `MEANING`/`PLAIN` text.

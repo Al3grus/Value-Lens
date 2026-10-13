@@ -1,0 +1,201 @@
+# ValueLens default configuration.
+# Copy any section into ./valuelens.toml (or pass --config path) to override it.
+# Only the keys you set are overridden; everything else falls back to these defaults.
+
+[sec]
+# SEC requires a User-Agent that identifies you: "Your Name your@email.com".
+# Can also be set with the VALUELENS_SEC_USER_AGENT environment variable.
+user_agent = ""
+
+[fred]
+# Optional free key from https://fredaccount.stlouisfed.org/apikeys (32 lowercase letters/digits).
+# With a key, rates come from FRED's official API; without one, from FRED's public CSV download.
+# Can also be set with the VALUELENS_FRED_API_KEY environment variable.
+api_key = ""
+
+[report]
+view = "simple"               # "simple" (plain English) or "detailed" (every number); CLI flags override
+animations = true             # live loading checklist in interactive terminals
+
+[cache]
+enabled = true
+dir = ""                      # empty = ~/.cache/valuelens (or %LOCALAPPDATA%\valuelens\cache on Windows)
+fundamentals_ttl_hours = 24
+macro_ttl_hours = 24
+ticker_map_ttl_hours = 168
+
+[macro]
+# Used only if FRED cannot be reached.
+aaa_yield_fallback = 6.0      # Moody's Seasoned Aaa Corporate Bond Yield, percent (Sep 2026: 6.03)
+treasury_10y_fallback = 5.3   # 10-year Treasury constant maturity, percent (Oct 2026: 5.28)
+
+# ---------------------------------------------------------------------------
+# Benjamin Graham — Defensive investor criteria (The Intelligent Investor, ch. 14)
+# ---------------------------------------------------------------------------
+[graham]
+min_revenue_usd = 2.0e9       # "adequate size": Graham's $100M of 1971 sales is about $0.8B in today's
+                              # money; $2B is a deliberately stricter bar
+min_current_ratio = 2.0
+earnings_years = 10           # positive earnings in each of the past N years
+dividend_years = 20           # uninterrupted dividends for the past N years
+min_eps_growth = 0.33         # +33% in per-share earnings over the growth window, using 3-year averages
+eps_growth_years = 10         # the window; with fewer years the +33% bar is scaled to the same yearly rate
+eps_growth_min_years = 6      # fewer years of EPS than this -> the growth test is N/A
+max_pe_3y = 15.0              # price / average EPS of the last 3 years
+max_pb = 1.5
+max_pe_x_pb = 22.5
+min_history_years = 5         # fewer years of data than this -> the earnings-stability test is N/A
+formula_growth_cap = 0.15     # cap on g in Graham's formula V = EPS x (8.5 + 2g) x 4.4 / Y
+# Banks and insurers have no current ratio or working capital; balance-sheet strength instead:
+min_equity_to_assets = 0.06   # shareholders' equity / total assets (US "well capitalised" leverage is 5%)
+min_tangible_equity_to_assets = 0.045  # equity less goodwill and intangibles / total assets
+
+# ---------------------------------------------------------------------------
+# Warren Buffett — Business quality + price discipline
+# ---------------------------------------------------------------------------
+[buffett]
+fcf_positive_ratio = 0.8      # positive FCF in >= 80% of the last 10 years
+min_roe = 0.15
+min_roic = 0.12
+min_interest_coverage = 5.0
+max_net_debt_ebitda = 3.0
+min_gross_margin = 0.40       # Buffett/Clark: durable advantage usually shows >= 40%
+min_op_margin = 0.15
+min_revenue_cagr = 0.05
+min_fcf_cagr = 0.05
+max_dilution_5y = 0.02        # diluted share count may grow at most 2% over 5 years
+max_capex_to_net_income = 0.50
+max_ev_fcf = 25.0
+max_pe = 25.0
+negligible_debt_to_ebit = 0.05  # debt below this share of EBIT counts as "no meaningful debt"
+min_history_years = 5         # the positive-FCF test needs this many years
+min_median_years = 3          # ROE / ROIC / margin medians need this many years
+min_share_years = 4           # the dilution test needs this many years of share counts
+one_dollar_years = 5          # the $1 test spans this many years (needs one more year of data)
+# Banks and insurers (cash-flow and margin tests are not meaningful): instead
+min_rotce = 0.12              # return on tangible common equity (10y median)
+min_bvps_cagr = 0.05          # book value per share growth (5y)
+max_p_tbv = 2.0               # price / tangible book value per share
+
+# ---------------------------------------------------------------------------
+# Intrinsic value
+# ---------------------------------------------------------------------------
+[valuation]
+equity_risk_premium = 0.05
+min_discount_rate = 0.08      # floor for both cost of equity and WACC
+min_rate_over_terminal = 0.02 # discount rates also stay at least this far above terminal growth
+beta_floor = 0.8
+beta_cap = 1.6
+terminal_growth = 0.025
+growth_cap = 0.15
+growth_floor = -0.05
+high_growth_years = 5
+fade_years = 5
+cost_of_debt_default_spread = 0.015  # over the risk-free rate, when interest expense is not reported
+cost_of_debt_min_spread = 0.005      # cost of debt (interest / debt) is kept within these spreads over
+cost_of_debt_max_spread = 0.06       # the risk-free rate, so stale low-coupon debt does not flatter it
+tax_rate_floor = 0.10         # the effective tax rate (NOPAT, core earnings, DCF) is kept in this band
+tax_rate_cap = 0.35
+subtract_sbc = true           # owner earnings: treat stock-based compensation as a real cost
+maintenance_capex = true      # owner earnings deduct maintenance capex only
+maintenance_capex_max_da = 1.0  # maintenance capex is at most this multiple of depreciation and at least
+                                # the smaller of depreciation and capex. At 1.0 (the default) that pins it
+                                # to min(capex, depreciation): an investment boom (e.g. AI data centres)
+                                # counts as growth, not upkeep. Above 1.0, Greenwald's estimate (capex less
+                                # the capex that sales growth needed, at the PP&E/sales ratio of prior
+                                # years) is used inside that band.
+maintenance_capex_lookback = 5  # years of PP&E/sales history for Greenwald's estimate (matters above 1.0)
+count_lt_investments = false  # treat non-current marketable securities as cash (Apple and Alphabet keep
+                              # most of their cash there); affects net debt, EV, ROIC and the DCF
+leases_as_debt = false        # treat operating-lease liabilities (ASC 842) as debt
+dcf_base_periods = 1          # DCF starts from the average of the latest N twelve-month periods (1 = latest
+                              # twelve months; averaging carries one-off cash payments and lags growth)
+core_earnings_threshold = 0.15  # use core (operating) earnings for every year when non-operating items
+                                # exceeded 15% of operating profit in any of the last 3 fiscal years
+scenario_growth_delta = 0.03  # bear/bull cases: growth -/+ 3pp
+scenario_rate_delta = 0.01    # bear/bull cases: discount rate +/- 1pp
+sensitivity_rate_steps = [-0.02, -0.01, 0.0, 0.01, 0.02]   # DCF sensitivity grid: discount-rate offsets
+sensitivity_growth_steps = [-0.03, 0.0, 0.03]              # and growth offsets
+default_tax_rate = 0.21
+excess_return_roe_cap = 0.25  # financials: the ROE fed to the excess-return model is capped here
+
+[valuation.weights]           # blended fair value (weights are renormalised over available methods)
+dcf = 0.6
+graham_formula = 0.2
+epv = 0.2
+graham_number = 0.0
+excess_return = 0.0
+
+[valuation.weights_financial] # banks / insurers: cash-flow based methods are not meaningful
+dcf = 0.0
+graham_formula = 0.25
+epv = 0.0
+graham_number = 0.25
+excess_return = 0.5           # book value + the value of earning more than the cost of equity
+
+# ---------------------------------------------------------------------------
+# Evidence-based factors (absolute rules of thumb — not cross-sectional ranks)
+# ---------------------------------------------------------------------------
+[factors]
+min_gross_profitability = 0.30   # Novy-Marx: gross profit / total assets
+min_greenblatt_roc = 0.25        # EBIT / (net working capital + net PP&E)
+min_earnings_yield = 0.07        # EBIT / enterprise value
+min_shareholder_yield = 0.02     # (dividends + net buybacks) / market cap
+max_asset_growth = 0.20          # Cooper-Gulen-Schill asset growth effect
+
+[health]
+piotroski_strong = 7
+piotroski_weak = 2               # F-score <= this is a red flag (a signal without data is not passed)
+piotroski_min_signals = 6        # ... provided at least this many of the 9 signals could be evaluated
+piotroski_dilution_tolerance = 0.005  # share count may rise this much and still count as "no dilution"
+beneish_threshold = -1.78        # M-score above this suggests possible earnings manipulation
+beneish_growth_sgi = 1.5         # sales growth index above this: a high M-score is "growth-driven", no flag
+
+[technicals]
+rsi_overbought = 70
+rsi_oversold = 30
+far_below_high = -0.30           # note when the price is this far below its 52-week high
+
+# ---------------------------------------------------------------------------
+# Per-framework signals: score is the pass ratio (0..1), mos is margin of safety (0..1)
+# ---------------------------------------------------------------------------
+[signals.graham]
+strong_buy_score = 0.70
+strong_buy_mos = 0.33          # Graham's one-third margin of safety
+buy_score = 0.60
+buy_mos = 0.15
+sell_mos = -0.30
+sell_score = 0.40
+
+[signals.buffett]
+strong_buy_score = 0.80
+strong_buy_mos = 0.20
+buy_score = 0.65
+buy_mos = 0.0                  # "a wonderful company at a fair price"
+sell_mos = -0.35
+sell_score = 0.40
+
+# ---------------------------------------------------------------------------
+# Combined verdict
+# ---------------------------------------------------------------------------
+[decision]
+strong_buy = 75
+buy = 62
+hold = 45
+sell = 35
+strong_buy_min_mos = 0.20
+buy_min_mos = 0.0
+mos_full_scale = 0.50          # MOS of +50% -> valuation score 100, -50% -> 0
+min_coverage = 0.60            # with data for fewer applicable criteria than this, the verdict is HOLD
+confidence_low_coverage = 0.60 # below this coverage, or fewer than confidence_low_years, confidence is LOW
+confidence_low_years = 5
+confidence_high_coverage = 0.85  # HIGH needs this coverage, confidence_high_years of history and
+confidence_high_years = 8        # valuation methods within max_method_dispersion of the fair value
+max_method_dispersion = 1.0
+stale_data_days = 200          # latest statements older than this: warning, confidence at most MEDIUM
+
+[decision.weights]
+quality = 0.35
+safety = 0.25
+factors = 0.15
+valuation = 0.25

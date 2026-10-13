@@ -1,0 +1,15 @@
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+
+  - repo: local
+    hooks:
+      - id: block-unsanitised-media
+        name: Block unreviewed screenshots/diagrams/videos
+        description: Review the file, then rename it to <name>.sanitized.<ext> to commit it.
+        language: fail
+        entry: "Unreviewed media file. Check it for names, hostnames, IPs, prompts and clocks; strip metadata; then rename to *.sanitized.<ext>:"
+        files: '(?i)\.(png|jpe?g|gif|webp|bmp|tiff?|heic|mp4|mov|webm|mkv|drawio|svg|pdf)$'
+        exclude: '(?i)(\.sanitized\.[a-z0-9]+$|^assets/img/favicons/|^assets/img/avatar\.jpg$)'

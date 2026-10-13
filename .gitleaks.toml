@@ -1,0 +1,52 @@
+# gitleaks v8.30+ config — public, generic OPSEC rules.
+# Personal identifiers (names, real hostnames, real IPs) live in a local,
+# untracked config (~/.config/gitleaks/private.toml) so this file never leaks them.
+title = "OPSEC guardrails"
+
+[extend]
+useDefault = true   # keep all built-in secret rules (API keys, tokens, private keys…)
+
+[[rules]]
+id = "private-ipv4"
+description = "RFC 1918 address — use RFC 5737 placeholders (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24)"
+regex = '''\b(?:10(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}|172\.(?:1[6-9]|2\d|3[01])(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){2}|192\.168(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){2})\b'''
+tags = ["opsec", "network"]
+
+[[rules]]
+id = "mac-address"
+description = "Hardware MAC address"
+regex = '''\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b'''
+tags = ["opsec", "network"]
+
+[[rules]]
+id = "wireguard-key"
+description = "WireGuard private/public/preshared key"
+regex = '''(?i)(?:PrivateKey|PublicKey|PresharedKey)\s*=\s*([A-Za-z0-9+/]{42,43}=)'''
+secretGroup = 1
+tags = ["secret", "wireguard"]
+
+[[rules]]
+id = "ssh-public-key"
+description = "SSH public key (fingerprints you across services)"
+regex = '''\b(?:ssh-(?:ed25519|rsa|dss)|ecdsa-sha2-nistp\d+)\s+AAAA[0-9A-Za-z+/]{40,}={0,3}'''
+tags = ["opsec", "fingerprint"]
+
+[[rules]]
+id = "windows-user-path"
+description = "Windows profile path reveals the local account name"
+regex = '''(?i)C:\\Users\\([A-Za-z0-9._-]+)'''
+secretGroup = 1
+[[rules.allowlists]]
+regexTarget = "secret"
+regexes = ['''(?i)^(public|default|user|username|example)$''']
+
+# Images/videos are binary — gitleaks skips them in git mode, so the media
+# check lives in .pre-commit-config.yaml (and the global hook) instead.
+
+# Placeholders that are allowed everywhere
+[[allowlists]]
+description = "Documentation IP ranges and placeholder hostnames"
+regexes = [
+  '''\b(?:192\.0\.2|198\.51\.100|203\.0\.113)\.\d{1,3}\b''',
+  '''\b(?:sensor|central|hypervisor)-0\d\b''',
+]
